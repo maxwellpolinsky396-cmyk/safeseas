@@ -266,7 +266,7 @@ function MapFollower({ position, follow }) {
   return null;
 }
 
-function LiveMap({ route, accent }) {
+function LiveMap({ route, accent, routingActive }) {
   const [userPos, setUserPos] = useState(null);
   const [tracking, setTracking] = useState(false);
   const [follow, setFollow] = useState(false);
@@ -279,9 +279,12 @@ function LiveMap({ route, accent }) {
   const defaultCenter = [27.4976, -82.7196];
   const fromCoords = route?.fromLat ? [parseFloat(route.fromLat), parseFloat(route.fromLon)] : null;
   const toCoords   = route?.toLat   ? [parseFloat(route.toLat),   parseFloat(route.toLon)]   : null;
+  // Snapped marina coords override the raw geocoded point for markers
+  const depCoords = route?.fromSnapped ? [route.fromSnapped.lat, route.fromSnapped.lon] : fromCoords;
+  const arrCoords = route?.toSnapped   ? [route.toSnapped.lat,   route.toSnapped.lon]   : toCoords;
   const center = userPos
     ? [userPos.lat, userPos.lng]
-    : (fromCoords || defaultCenter);
+    : (depCoords || defaultCenter);
 
   const startGPS = () => {
     if (!navigator.geolocation) { setGpsError('GPS not supported by this browser'); return; }
@@ -306,7 +309,7 @@ function LiveMap({ route, accent }) {
   // AIS center: prefer live GPS, fall back to route departure point
   const aisCenter = userPos
     ? { lat: userPos.lat, lng: userPos.lng }
-    : (fromCoords ? { lat: fromCoords[0], lng: fromCoords[1] } : null);
+    : (depCoords ? { lat: depCoords[0], lng: depCoords[1] } : null);
 
   // AIS WebSocket — resubscribes when center moves ~0.1°
   useEffect(() => {
@@ -363,17 +366,28 @@ function LiveMap({ route, accent }) {
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"/>
         <TileLayer url="https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png" opacity={0.85}/>
 
-        {fromCoords && toCoords && (
-          <Polyline positions={[fromCoords, toCoords]} color={accent} weight={3} dashArray="10 6" opacity={0.9}/>
+        {/* Route line — maritime waypoints when available, straight-line fallback */}
+        {route?.waypoints?.length >= 2 && (
+          <Polyline positions={route.waypoints} color={accent} weight={3} dashArray="10 6" opacity={0.9}/>
         )}
-        {fromCoords && (
-          <Marker position={fromCoords} icon={_dotIcon(accent)}>
-            <Popup><strong>Departure</strong><br/>{route?.from}</Popup>
+        {!route?.waypoints && depCoords && arrCoords && (
+          <Polyline positions={[depCoords, arrCoords]} color={accent} weight={3} dashArray="10 6" opacity={0.9}/>
+        )}
+
+        {depCoords && (
+          <Marker position={depCoords} icon={_dotIcon(accent)}>
+            <Popup>
+              <strong>Departure</strong>{route?.fromSnapped?.name ? <><br/><span style={{ fontSize: 12 }}>{route.fromSnapped.name}</span></> : null}
+              <br/><span style={{ fontSize: 11, color: '#888' }}>{route?.from}</span>
+            </Popup>
           </Marker>
         )}
-        {toCoords && (
-          <Marker position={toCoords} icon={_pinIcon(accent)}>
-            <Popup><strong>Destination</strong><br/>{route?.to}</Popup>
+        {arrCoords && (
+          <Marker position={arrCoords} icon={_pinIcon(accent)}>
+            <Popup>
+              <strong>Destination</strong>{route?.toSnapped?.name ? <><br/><span style={{ fontSize: 12 }}>{route.toSnapped.name}</span></> : null}
+              <br/><span style={{ fontSize: 11, color: '#888' }}>{route?.to}</span>
+            </Popup>
           </Marker>
         )}
 
@@ -429,6 +443,20 @@ function LiveMap({ route, accent }) {
         }}>
           {follow ? '● Following' : '○ Follow me'}
         </button>
+      )}
+
+      {/* Maritime routing indicator */}
+      {routingActive && (
+        <div style={{
+          position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 1000,
+          padding: '5px 12px', borderRadius: 99,
+          background: 'rgba(10,20,32,0.92)', border: '1px solid #1E2F42',
+          backdropFilter: 'blur(10px)',
+          display: 'flex', alignItems: 'center', gap: 7,
+        }}>
+          <div style={{ width: 7, height: 7, borderRadius: 99, background: '#38BDF8', boxShadow: '0 0 6px #38BDF8', animation: 'pulse 1.2s infinite' }}/>
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: '#CBD5E1' }}>Finding water route…</span>
+        </div>
       )}
 
       {/* AIS vessel count badge */}
@@ -1261,7 +1289,7 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
 // ─────────────────────────────────────────────────────────────
 // TRIP DETAIL SCREEN
 // ─────────────────────────────────────────────────────────────
-function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, currentTrip, routeSafety }) {
+function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, currentTrip, routeSafety, routingActive }) {
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [routeProgress, setRouteProgress] = useState(0);
   const [saved, setSaved] = useState(false);
@@ -1324,7 +1352,7 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
 
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-      <LiveMap accent={accent} route={route}/>
+      <LiveMap accent={accent} route={route} routingActive={routingActive}/>
 
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 100, zIndex: 500,
         background: 'linear-gradient(180deg, rgba(6,21,32,0.7), transparent)', pointerEvents: 'none' }}/>
@@ -1956,6 +1984,7 @@ function App() {
   const [route, setRoute] = useState({ from: 'Anna Maria Island', to: 'Egmont Key' });
   const [currentTrip, setCurrentTrip] = useState(null);
   const [routeSafety, setRouteSafety] = useState(null);
+  const [routingActive, setRoutingActive] = useState(false);
   const homeStatus = routeSafety?.verdict || t.verdict;
 
   const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {};
@@ -2133,10 +2162,36 @@ function App() {
         if (needTo   && results[i]?.[0]) { full.toLat   = results[i][0].lat; full.toLon   = results[i][0].lon; }
       } catch (err) { console.warn('Route geocode failed', err); }
     }
-    await checkSafety(boat, full);
+
+    // Switch to trip tab immediately
     setRoute(full);
     setCurrentTrip(null);
     setTab('trip');
+
+    // Safety check and maritime routing run independently — neither blocks the other
+    checkSafety(boat, full);
+
+    if (full.fromLat && full.toLat) {
+      setRoutingActive(true);
+      fetch(`${API}/api/maritime-route`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromLat: full.fromLat, fromLon: full.fromLon, toLat: full.toLat, toLon: full.toLon }),
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then(maritime => {
+          setRoutingActive(false);
+          if (maritime) {
+            setRoute(prev => ({
+              ...prev,
+              waypoints:   maritime.waypoints   || null,
+              fromSnapped: maritime.fromSnapped || null,
+              toSnapped:   maritime.toSnapped   || null,
+            }));
+          }
+        })
+        .catch(() => setRoutingActive(false));
+    }
   }
 
   async function saveTrip(trip) {
@@ -2217,6 +2272,7 @@ function App() {
                     route={currentTrip ? { from: currentTrip.from, to: currentTrip.to } : route}
                     currentTrip={currentTrip}
                     routeSafety={routeSafety}
+                    routingActive={routingActive}
                     onSave={saveTrip}
                     onPlan={planRoute}
                   />
@@ -2234,7 +2290,11 @@ function App() {
                         setRoute({ from: trip.from || 'Anna Maria Island', to: trip.to || 'Egmont Key' });
                         setTab('trip');
                       }}
-                      onUpdateRoute={(partial) => setRoute(r => ({ ...r, ...partial }))}
+                      onUpdateRoute={(partial) => setRoute(r => ({
+                        ...r, ...partial,
+                        // Clear computed route whenever endpoints change so stale waypoints don't linger
+                        waypoints: null, fromSnapped: null, toSnapped: null,
+                      }))}
                       onSelectBoat={(b) => setBoat(b)}
                       onPickBoat={() => setTab('boat')}
                       trips={trips}

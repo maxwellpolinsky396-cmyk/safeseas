@@ -5,6 +5,7 @@ const db = require('./src/db');
 const safety = require('./src/safety');
 const geocode = require('./src/geocode');
 const mailer = require('./src/mailer');
+const maritime = require('./src/maritime');
 
 // In-memory store: email -> { code, expires }
 const resetCodes = new Map();
@@ -219,6 +220,25 @@ app.post('/api/safety-check', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'failed to compute safety check', message: err.message });
+  }
+});
+
+// ── Maritime routing ─────────────────────────────────────────────────────────
+
+app.post('/api/maritime-route', async (req, res) => {
+  try {
+    const { fromLat, fromLon, toLat, toLon } = req.body;
+    if (fromLat == null || fromLon == null || toLat == null || toLon == null) {
+      return res.status(400).json({ error: 'fromLat, fromLon, toLat, toLon are required' });
+    }
+    const result = await maritime.computeMaritimeRoute(
+      parseFloat(fromLat), parseFloat(fromLon),
+      parseFloat(toLat),   parseFloat(toLon)
+    );
+    res.json(result);
+  } catch (err) {
+    console.error('maritime-route error', err);
+    res.status(500).json({ error: 'maritime routing failed', message: err.message });
   }
 });
 
