@@ -1,11 +1,12 @@
 const noaa = require('./noaa');
 const geocode = require('./geocode');
 
+const _fetch = globalThis.fetch;
+
 function parseLength(length) {
   if (!length) return null;
   const match = String(length).match(/([0-9]+(?:\.[0-9]+)?)/);
-  if (!match) return null;
-  return parseFloat(match[1]);
+  return match ? parseFloat(match[1]) : null;
 }
 
 function getBoatThresholds(boat) {
@@ -30,111 +31,178 @@ function evaluate(conditions, thresholds) {
   const current = conditions.currentSpeed || null;
   const tide = conditions.tideHeight || null;
 
-  if (wind > thresholds.windLim) {
+  if (wind > thresholds.windLim)
     reasons.push(`Wind ${wind} kt exceeds ${thresholds.windLim} kt safe limit`);
-  }
-  if (gust && gust > thresholds.windLim + 4) {
+  if (gust && gust > thresholds.windLim + 4)
     reasons.push(`Gusts ${gust} kt are above a conservative safety window for this boat`);
-  }
-  if (waveHeight !== null && waveHeight > thresholds.waveLim) {
+  if (waveHeight !== null && waveHeight > thresholds.waveLim)
     reasons.push(`Wave height ${waveHeight} ft exceeds ${thresholds.waveLim} ft boat comfort`);
-  }
-  if (current !== null && current > thresholds.currentLim) {
+  if (current !== null && current > thresholds.currentLim)
     reasons.push(`Current ${current} kt is stronger than the ${thresholds.currentLim} kt limit for this boat`);
-  }
-  if (tide !== null && tide < 0.5) {
+  if (tide !== null && tide < 0.5)
     reasons.push('Low tide may make shallow passage or inlet transit hazardous');
-  }
 
-  const verdict = reasons.length === 0 ? 'go' : reasons.some(r => /exceeds|stronger|hazardous|above/i.test(r)) ? 'nogo' : 'wait';
+  const verdict = reasons.length === 0
+    ? 'go'
+    : reasons.some(r => /exceeds|stronger|hazardous|above/i.test(r)) ? 'nogo' : 'wait';
   return { verdict, reasons };
 }
 
+// Interpolate n evenly-spaced points along a straight-line route (inclusive)
+function _routePoints(fromLat, fromLon, toLat, toLon, n = 5) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const t = n === 1 ? 0.5 : i / (n - 1);
+    pts.push({
+      lat: +(fromLat + t * (toLat - fromLat)).toFixed(5),
+      lon: +(fromLon + t * (toLon - fromLon)).toFixed(5),
+    });
+  }
+  return pts;
+}
+
+// OpenTopoData ETOPO1 — returns deepest point along route in feet, or null
+async function _fetchMaxDepth(fromLat, fromLon, toLat, toLon) {
+  try {
+    const pts = _routePoints(fromLat, fromLon, toLat, toLon, 5);
+    const locs = pts.map(p => `${p.lat},${p.lon}`).join('|');
+    const res = await _fetch(
+      `https://api.opentopodata.org/v1/etopo1?locations=${locs}`,
+      { headers: { 'User-Agent': 'SafeSeas/1.0' }, signal: AbortSignal.timeout(8000) }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.status !== 'OK') return null;
+    const elevs = (data.results || []).map(r => r.elevation).filter(e => typeof e === 'number');
+    if (!elevs.length) return null;
+    const minElev = Math.min(...elevs);
+    if (minElev >= 0) return null; // entirely above sea level
+    return Math.round(Math.abs(minElev) * 3.28084); // metres → feet
+  } catch (err) {
+    console.warn('Max depth fetch failed:', err.message);
+    return null;
+  }
+}
+
 async function checkRouteSafety({ boat, route, departureTime }) {
-  let location = noaa.lookupLocation(route?.from) || noaa.lookupLocation(route?.to);
+  // ── Resolve departure location ──────────────────────────────────────────────
+  let depLoc = noaa.lookupLocation(route?.from) || noaa.lookupLocation(route?.to);
   let geocoded = null;
-  if (!location) {
-    // try geocoding the 'from' location
-    try {
-      const results = await geocode.geocode(route?.from || route?.to || '');
-      if (Array.isArray(results) && results.length) {
-        geocoded = results[0];
-        location = { lat: geocoded.lat, lon: geocoded.lon };
+  if (!depLoc) {
+    if (route?.fromLat && route?.fromLon) {
+      depLoc = { lat: parseFloat(route.fromLat), lon: parseFloat(route.fromLon) };
+    } else {
+      try {
+        const results = await geocode.geocode(route?.from || route?.to || '');
+        if (Array.isArray(results) && results.length) {
+          geocoded = results[0];
+          depLoc = { lat: parseFloat(geocoded.lat), lon: parseFloat(geocoded.lon) };
+        }
+      } catch (err) {
+        console.warn('Departure geocode failed', err.message);
       }
-    } catch (err) {
-      console.warn('Geocode failed', err.message);
     }
   }
+
+  // ── Resolve destination location ────────────────────────────────────────────
+  let destLoc = noaa.lookupLocation(route?.to);
+  if (!destLoc && route?.toLat && route?.toLon) {
+    destLoc = { lat: parseFloat(route.toLat), lon: parseFloat(route.toLon) };
+  } else if (!destLoc && route?.to) {
+    try {
+      const results = await geocode.geocode(route.to);
+      if (Array.isArray(results) && results.length) {
+        destLoc = { lat: parseFloat(results[0].lat), lon: parseFloat(results[0].lon) };
+      }
+    } catch {}
+  }
+
   const thresholds = getBoatThresholds(boat || {});
-  let conditions = {
-    wind: null,
-    gust: null,
-    waveHeight: null,
-    tideHeight: null,
-    currentSpeed: null,
+  const conditions = {
+    wind: null, gust: null, waveHeight: null,
+    tideHeight: null, currentSpeed: null,
+    arrivalWind: null, arrivalWindDir: null, maxDepthFt: null,
   };
   const now = departureTime ? new Date(departureTime) : new Date();
-  const beginDate = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-  const endDate = beginDate;
-
+  const yyyymmdd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
   let hourly = [];
-  if (location) {
-    try {
-      const periods = await noaa.getHourlyForecast(location.lat, location.lon);
-      if (periods.length) {
-        const sample = periods[0];
-        conditions.wind = parseWindSpeed(sample.windSpeed);
-        conditions.gust = parseWindSpeed(sample.windGust) || conditions.wind;
-        if (sample.waveHeight) {
-          conditions.waveHeight = parseFloat(sample.waveHeight);
-        }
-        hourly = periods.slice(0, 7).map(item => {
-          const itemWind = parseWindSpeed(item.windSpeed);
-          const itemGust = parseWindSpeed(item.windGust) || itemWind;
-          return {
-            t: item.startTime ? new Date(item.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : item.name,
-            wind: itemWind,
-            gust: itemGust,
-            shortForecast: item.shortForecast || item.detailedForecast || '',
-            temperature: item.temperature != null ? `${item.temperature}${item.temperatureUnit || 'F'}` : null,
-            ok: itemWind != null && itemWind <= thresholds.windLim && itemGust <= thresholds.windLim + 4,
-          };
-        });
-      }
-    } catch (err) {
-      console.warn('NOAA weather fetch failed', err.message);
-    }
 
-    // if we don't have a station, try to find the nearest known station
-    let stationId = location.station;
+  const tasks = [];
+
+  // ── Departure weather ───────────────────────────────────────────────────────
+  if (depLoc) {
+    tasks.push(
+      noaa.getHourlyForecast(depLoc.lat, depLoc.lon)
+        .then(periods => {
+          if (!periods.length) return;
+          const s = periods[0];
+          conditions.wind = parseWindSpeed(s.windSpeed);
+          conditions.gust = parseWindSpeed(s.windGust) || conditions.wind;
+          if (s.waveHeight) conditions.waveHeight = parseFloat(s.waveHeight);
+          hourly = periods.slice(0, 7).map(item => {
+            const iw = parseWindSpeed(item.windSpeed);
+            const ig = parseWindSpeed(item.windGust) || iw;
+            return {
+              t: item.startTime
+                ? new Date(item.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+                : item.name,
+              wind: iw, gust: ig,
+              shortForecast: item.shortForecast || '',
+              temperature: item.temperature != null ? `${item.temperature}${item.temperatureUnit || 'F'}` : null,
+              ok: iw != null && iw <= thresholds.windLim && ig <= thresholds.windLim + 4,
+            };
+          });
+        })
+        .catch(err => console.warn('NOAA departure forecast failed', err.message))
+    );
+
+    // Tide & currents
+    let stationId = depLoc.station;
     if (!stationId && geocoded) {
-      const nearest = noaa.getNearestStation(geocoded.lat, geocoded.lon);
-      if (nearest && nearest.station) stationId = nearest.station;
+      const nearest = noaa.getNearestStation(parseFloat(geocoded.lat), parseFloat(geocoded.lon));
+      if (nearest?.station) stationId = nearest.station;
     }
-
     if (stationId) {
-      try {
-        const tides = await noaa.getTidePredictions(stationId, beginDate, endDate);
-        if (Array.isArray(tides) && tides.length) {
-          conditions.tideHeight = parseFloat(tides[0].v);
-        }
-      } catch (err) {
-        console.warn('NOAA tide fetch failed', err.message);
-      }
-
-      try {
-        const currents = await noaa.getCurrentPredictions(stationId, beginDate, endDate);
-        if (Array.isArray(currents) && currents.length) {
-          const current = parseFloat(currents[0].s || currents[0].v || 0);
-          if (!Number.isNaN(current)) {
-            conditions.currentSpeed = current;
-          }
-        }
-      } catch (err) {
-        console.warn('NOAA current fetch failed', err.message);
-      }
+      tasks.push(
+        noaa.getTidePredictions(stationId, yyyymmdd, yyyymmdd)
+          .then(tides => { if (tides.length) conditions.tideHeight = parseFloat(tides[0].v); })
+          .catch(err => console.warn('Tide fetch failed', err.message))
+      );
+      tasks.push(
+        noaa.getCurrentPredictions(stationId, yyyymmdd, yyyymmdd)
+          .then(currents => {
+            if (currents.length) {
+              const c = parseFloat(currents[0].s || currents[0].v || 0);
+              if (!isNaN(c)) conditions.currentSpeed = c;
+            }
+          })
+          .catch(err => console.warn('Currents fetch failed', err.message))
+      );
     }
   }
+
+  // ── Arrival wind (NOAA NWS at destination) ──────────────────────────────────
+  if (destLoc) {
+    tasks.push(
+      noaa.getHourlyForecast(destLoc.lat, destLoc.lon)
+        .then(periods => {
+          if (!periods.length) return;
+          conditions.arrivalWind = parseWindSpeed(periods[0].windSpeed);
+          conditions.arrivalWindDir = periods[0].windDirection || null;
+        })
+        .catch(err => console.warn('NOAA arrival forecast failed', err.message))
+    );
+  }
+
+  // ── Max depth along route (OpenTopoData ETOPO1) ─────────────────────────────
+  if (depLoc && destLoc) {
+    tasks.push(
+      _fetchMaxDepth(depLoc.lat, depLoc.lon, destLoc.lat, destLoc.lon)
+        .then(depth => { conditions.maxDepthFt = depth; })
+    );
+  }
+
+  await Promise.all(tasks);
 
   const result = evaluate(conditions, thresholds);
   return {
@@ -149,6 +217,4 @@ async function checkRouteSafety({ boat, route, departureTime }) {
   };
 }
 
-module.exports = {
-  checkRouteSafety,
-};
+module.exports = { checkRouteSafety };

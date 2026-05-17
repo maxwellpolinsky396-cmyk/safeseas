@@ -66,6 +66,7 @@ const Icon = ({ name, size = 22, color = 'currentColor', sw = 1.8 }) => {
     logout:   <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" {...p}/></>,
     trash:    <><path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M9 6V4h6v2" {...p}/></>,
     settings: <><circle cx="12" cy="12" r="3" {...p}/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" {...p}/></>,
+    anchor:   <><circle cx="12" cy="5" r="3" {...p}/><path d="M12 8v13M5 12a7 7 0 0 0 14 0M5 12H2M22 12h-3" {...p}/></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24">{paths[name]}</svg>;
 };
@@ -302,10 +303,15 @@ function LiveMap({ route, accent }) {
     watchRef.current = null;
   };
 
-  // AIS WebSocket — resubscribes when user moves ~0.1°
+  // AIS center: prefer live GPS, fall back to route departure point
+  const aisCenter = userPos
+    ? { lat: userPos.lat, lng: userPos.lng }
+    : (fromCoords ? { lat: fromCoords[0], lng: fromCoords[1] } : null);
+
+  // AIS WebSocket — resubscribes when center moves ~0.1°
   useEffect(() => {
-    if (!userPos) return;
-    const { lat, lng } = userPos;
+    if (!aisCenter || !AISSTREAM_KEY) return;
+    const { lat, lng } = aisCenter;
     const ws = new WebSocket('wss://stream.aisstream.io/v0/stream');
     wsRef.current = ws;
     ws.onopen = () => {
@@ -340,8 +346,8 @@ function LiveMap({ route, accent }) {
     ws.onclose = () => setAisConnected(false);
     return () => { ws.close(); setAisConnected(false); };
   }, [
-    userPos ? Math.round(userPos.lat * 10) : null,
-    userPos ? Math.round(userPos.lng * 10) : null,
+    aisCenter ? Math.round(aisCenter.lat * 10) : null,
+    aisCenter ? Math.round(aisCenter.lng * 10) : null,
   ]);
 
   useEffect(() => () => {
@@ -1294,12 +1300,19 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
     { t: '7p', wind: 15, ok: false },
   ];
   const startWind = routeConditions.wind != null ? routeConditions.wind : '—';
-  const startSub = routeSafety ? (routeConditions.gust != null ? `${routeConditions.gust} kt gust` : 'Forecast unavailable') : 'Forecast unavailable';
-  const midWave = routeConditions.waveHeight != null ? routeConditions.waveHeight : '—';
-  const midSub = routeSafety ? (routeConditions.waveHeight != null ? `Wave ${routeConditions.waveHeight.toFixed(1)} ft` : 'Forecast unavailable') : 'Forecast unavailable';
-  const arrivalValue = routeConditions.currentSpeed != null ? routeConditions.currentSpeed : '—';
-  const arrivalUnit = 'kt';
-  const arrivalSub = routeSafety ? (routeConditions.currentSpeed != null ? `Current ${routeConditions.currentSpeed} kt` : 'Current unknown') : 'Forecast unavailable';
+  const startSub  = routeSafety
+    ? (routeConditions.gust != null ? `${routeConditions.gust} kt gust` : 'No gust data')
+    : 'Forecast unavailable';
+  const arrWindVal = routeConditions.arrivalWind != null ? routeConditions.arrivalWind : '—';
+  const arrWindSub = routeSafety
+    ? (routeConditions.arrivalWindDir
+        ? `From ${routeConditions.arrivalWindDir}`
+        : (routeConditions.arrivalWind != null ? 'At destination' : 'Forecast unavailable'))
+    : 'Forecast unavailable';
+  const depthVal = routeConditions.maxDepthFt != null ? routeConditions.maxDepthFt : '—';
+  const depthSub  = routeSafety
+    ? (routeConditions.maxDepthFt != null ? 'Deepest along route' : 'Unavailable')
+    : 'Unavailable';
   const safeHour = hourly.find(h => h.ok);
   const bestWindow = routeSafety ? (
     safeHour ? `Leave ${safeHour.t}${safeHour.shortForecast ? ` — ${safeHour.shortForecast.toLowerCase()}` : ''}` : 'No safe departure window today'
@@ -1412,9 +1425,9 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
               Conditions along the route
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <ConditionTile icon="wind" label="At start" value={startWind} unit="kt" sub={startSub}/>
-              <ConditionTile icon="wave" label="Mid-trip" value={midWave} unit="ft" sub={midSub}/>
-              <ConditionTile icon="eye" label="Arrival" value={arrivalValue} unit={arrivalUnit} sub={arrivalSub}/>
+              <ConditionTile icon="wind"   label="Depart"    value={startWind} unit="kt" sub={startSub}/>
+              <ConditionTile icon="wind"   label="Arrival"   value={arrWindVal} unit="kt" sub={arrWindSub}/>
+              <ConditionTile icon="anchor" label="Max depth" value={depthVal}   unit="ft" sub={depthSub}/>
             </div>
           </div>
 
@@ -2101,6 +2114,31 @@ function App() {
     return null;
   }
 
+  async function planRoute(routeData) {
+    setRouteSafety(null);
+    // Build full route — reuse existing coords when text is unchanged, geocode otherwise
+    let full = { ...routeData };
+    if (route.from === routeData.from && route.fromLat) { full.fromLat = route.fromLat; full.fromLon = route.fromLon; }
+    if (route.to   === routeData.to   && route.toLat)   { full.toLat   = route.toLat;   full.toLon   = route.toLon;   }
+    const needFrom = !full.fromLat;
+    const needTo   = !full.toLat;
+    if (needFrom || needTo) {
+      try {
+        const fetches = [];
+        if (needFrom) fetches.push(fetch(`${API}/api/geocode?q=${encodeURIComponent(routeData.from)}`).then(r => r.ok ? r.json() : []));
+        if (needTo)   fetches.push(fetch(`${API}/api/geocode?q=${encodeURIComponent(routeData.to)}`).then(r => r.ok ? r.json() : []));
+        const results = await Promise.all(fetches);
+        let i = 0;
+        if (needFrom && results[i]?.[0]) { full.fromLat = results[i][0].lat; full.fromLon = results[i][0].lon; i++; }
+        if (needTo   && results[i]?.[0]) { full.toLat   = results[i][0].lat; full.toLon   = results[i][0].lon; }
+      } catch (err) { console.warn('Route geocode failed', err); }
+    }
+    await checkSafety(boat, full);
+    setRoute(full);
+    setCurrentTrip(null);
+    setTab('trip');
+  }
+
   async function saveTrip(trip) {
     try {
       const res = await fetch(`${API}/api/trips`, {
@@ -2180,13 +2218,7 @@ function App() {
                     currentTrip={currentTrip}
                     routeSafety={routeSafety}
                     onSave={saveTrip}
-                    onPlan={async (routeData) => {
-                      setRouteSafety(null);
-                      await checkSafety(boat, routeData);
-                      setRoute(routeData);
-                      setCurrentTrip(null);
-                      setTab('trip');
-                    }}
+                    onPlan={planRoute}
                   />
                 </div>
               ) : (
@@ -2196,13 +2228,7 @@ function App() {
                       accent={t.accent} boat={boat} boats={boats}
                       currentStatus={homeStatus} routeSafety={routeSafety}
                       route={currentTrip ? { from: currentTrip.from, to: currentTrip.to } : route}
-                      onPlan={async (routeData) => {
-                        setRouteSafety(null);
-                        await checkSafety(boat, routeData);
-                        setRoute(routeData);
-                        setCurrentTrip(null);
-                        setTab('trip');
-                      }}
+                      onPlan={planRoute}
                       onTrip={(trip) => {
                         setCurrentTrip(trip);
                         setRoute({ from: trip.from || 'Anna Maria Island', to: trip.to || 'Egmont Key' });
