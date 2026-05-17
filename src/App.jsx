@@ -1902,7 +1902,7 @@ function TabBar({ tab, setTab, accent }) {
       position: 'absolute', left: 0, right: 0, bottom: 0,
       paddingBottom: 28, paddingTop: 6,
       background: 'linear-gradient(180deg, rgba(10,20,32,0) 0%, #0A1420 30%)',
-      zIndex: 100,
+      zIndex: 600,
     }}>
       <div style={{
         margin: '0 16px', height: 60, borderRadius: 22,
