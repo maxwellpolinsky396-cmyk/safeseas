@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet'
+import L from 'leaflet'
 import { IOSDevice, IOSStatusBar } from './ios-frame'
 import { useTweaks, TweaksPanel, TweakSection, TweakColor, TweakRadio, TweakToggle } from './tweaks-panel'
 
@@ -203,7 +205,265 @@ function BoatArt({ type, color = '#F1F5F9', size = 80 }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Marine map
+// LIVE MAP — Leaflet + OpenSeaMap + GPS + AIS vessel traffic
+// ─────────────────────────────────────────────────────────────
+const AISSTREAM_KEY = import.meta.env.VITE_AISSTREAM_KEY || '';
+
+function _vesselColor(typeCode) {
+  if (typeCode >= 60 && typeCode <= 69) return '#4ADE80'; // passenger
+  if (typeCode >= 70 && typeCode <= 79) return '#38BDF8'; // cargo
+  if (typeCode >= 80 && typeCode <= 89) return '#F87171'; // tanker
+  if (typeCode === 30)                  return '#FB923C'; // fishing
+  if (typeCode === 36 || typeCode === 37) return '#818CF8'; // sailing
+  return '#94A3B8';
+}
+
+function _vesselIcon(cog, color) {
+  return L.divIcon({
+    className: '',
+    html: `<svg width="14" height="18" viewBox="0 0 14 18" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(${(cog || 0)}deg);display:block;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6))"><polygon points="7,0 14,18 7,13 0,18" fill="${color}"/></svg>`,
+    iconSize: [14, 18],
+    iconAnchor: [7, 9],
+  });
+}
+
+const _gpsIcon = L.divIcon({
+  className: '',
+  html: `<div style="width:16px;height:16px;background:#4F9FFF;border:3px solid white;border-radius:50%;box-shadow:0 0 0 5px rgba(79,159,255,0.28),0 2px 6px rgba(0,0,0,0.5)"></div>`,
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+});
+
+function _dotIcon(color) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:10px;height:10px;background:white;border:2.5px solid ${color};border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.5)"></div>`,
+    iconSize: [10, 10],
+    iconAnchor: [5, 5],
+  });
+}
+
+function _pinIcon(color) {
+  return L.divIcon({
+    className: '',
+    html: `<svg width="16" height="22" viewBox="0 0 16 22" xmlns="http://www.w3.org/2000/svg" style="display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.5))"><path d="M8 0C3.6 0 0 3.6 0 8c0 5.4 8 14 8 14s8-8.6 8-14c0-4.4-3.6-8-8-8z" fill="${color}"/><circle cx="8" cy="8" r="3.5" fill="white"/></svg>`,
+    iconSize: [16, 22],
+    iconAnchor: [8, 22],
+  });
+}
+
+function MapFollower({ position, follow }) {
+  const map = useMap();
+  const prev = useRef(null);
+  useEffect(() => {
+    if (!follow || !position) return;
+    const { lat, lng } = position;
+    if (prev.current && Math.abs(prev.current.lat - lat) < 0.00005 && Math.abs(prev.current.lng - lng) < 0.00005) return;
+    prev.current = { lat, lng };
+    map.setView([lat, lng], map.getZoom(), { animate: true });
+  }, [position, follow]);
+  return null;
+}
+
+function LiveMap({ route, accent }) {
+  const [userPos, setUserPos] = useState(null);
+  const [tracking, setTracking] = useState(false);
+  const [follow, setFollow] = useState(false);
+  const [vessels, setVessels] = useState({});
+  const [gpsError, setGpsError] = useState(null);
+  const [aisConnected, setAisConnected] = useState(false);
+  const watchRef = useRef(null);
+  const wsRef = useRef(null);
+
+  const defaultCenter = [27.4976, -82.7196];
+  const fromCoords = route?.fromLat ? [parseFloat(route.fromLat), parseFloat(route.fromLon)] : null;
+  const toCoords   = route?.toLat   ? [parseFloat(route.toLat),   parseFloat(route.toLon)]   : null;
+  const center = userPos
+    ? [userPos.lat, userPos.lng]
+    : (fromCoords || defaultCenter);
+
+  const startGPS = () => {
+    if (!navigator.geolocation) { setGpsError('GPS not supported by this browser'); return; }
+    setGpsError(null);
+    watchRef.current = navigator.geolocation.watchPosition(
+      pos => setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy }),
+      () => setGpsError('Location access denied — check browser permissions'),
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 12000 }
+    );
+    setTracking(true);
+    setFollow(true);
+  };
+
+  const stopGPS = () => {
+    if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current);
+    setTracking(false);
+    setFollow(false);
+    setUserPos(null);
+    watchRef.current = null;
+  };
+
+  // AIS WebSocket — resubscribes when user moves ~0.1°
+  useEffect(() => {
+    if (!userPos) return;
+    const { lat, lng } = userPos;
+    const ws = new WebSocket('wss://stream.aisstream.io/v0/stream');
+    wsRef.current = ws;
+    ws.onopen = () => {
+      setAisConnected(true);
+      ws.send(JSON.stringify({
+        APIKey: AISSTREAM_KEY,
+        BoundingBoxes: [[[lat - 0.25, lng - 0.25], [lat + 0.25, lng + 0.25]]],
+        FilterMessageTypes: ['PositionReport'],
+      }));
+    };
+    ws.onmessage = e => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.MessageType !== 'PositionReport') return;
+        const p    = msg.Message?.PositionReport;
+        const meta = msg.MetaData;
+        if (!p || Math.abs(p.Latitude) < 0.001 || Math.abs(p.Longitude) < 0.001) return;
+        setVessels(prev => ({
+          ...prev,
+          [p.UserID]: {
+            mmsi:     p.UserID,
+            name:     (meta?.ShipName || `Vessel ${p.UserID}`).trim(),
+            lat:      p.Latitude,
+            lng:      p.Longitude,
+            cog:      p.CourseOverGround,
+            sog:      p.SpeedOverGround,
+            shipType: meta?.ShipType || 0,
+          },
+        }));
+      } catch {}
+    };
+    ws.onclose = () => setAisConnected(false);
+    return () => { ws.close(); setAisConnected(false); };
+  }, [
+    userPos ? Math.round(userPos.lat * 10) : null,
+    userPos ? Math.round(userPos.lng * 10) : null,
+  ]);
+
+  useEffect(() => () => {
+    if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current);
+    wsRef.current?.close();
+  }, []);
+
+  const vesselList = Object.values(vessels);
+
+  return (
+    <div style={{ position: 'absolute', inset: 0 }}>
+      <MapContainer center={center} zoom={12} style={{ width: '100%', height: '100%' }} zoomControl={false} attributionControl={false}>
+        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"/>
+        <TileLayer url="https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png" opacity={0.85}/>
+
+        {fromCoords && toCoords && (
+          <Polyline positions={[fromCoords, toCoords]} color={accent} weight={3} dashArray="10 6" opacity={0.9}/>
+        )}
+        {fromCoords && (
+          <Marker position={fromCoords} icon={_dotIcon(accent)}>
+            <Popup><strong>Departure</strong><br/>{route?.from}</Popup>
+          </Marker>
+        )}
+        {toCoords && (
+          <Marker position={toCoords} icon={_pinIcon(accent)}>
+            <Popup><strong>Destination</strong><br/>{route?.to}</Popup>
+          </Marker>
+        )}
+
+        {vesselList.map(v => (
+          <Marker key={v.mmsi} position={[v.lat, v.lng]} icon={_vesselIcon(v.cog, _vesselColor(v.shipType))}>
+            <Popup>
+              <div style={{ minWidth: 140 }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>{v.name}</div>
+                <div style={{ fontSize: 12 }}>Speed: {v.sog?.toFixed(1) ?? '—'} kt</div>
+                <div style={{ fontSize: 12 }}>Course: {v.cog != null ? Math.round(v.cog) : '—'}°</div>
+                <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>MMSI {v.mmsi}</div>
+              </div>
+            </Popup>
+          </Marker>
+        ))}
+
+        {userPos && (
+          <Marker position={[userPos.lat, userPos.lng]} icon={_gpsIcon}>
+            <Popup>You are here<br/><span style={{ fontSize: 11 }}>±{Math.round(userPos.acc)} m accuracy</span></Popup>
+          </Marker>
+        )}
+
+        <MapFollower position={userPos} follow={follow}/>
+      </MapContainer>
+
+      {/* GPS tracking button */}
+      <button
+        onClick={tracking ? stopGPS : startGPS}
+        style={{
+          position: 'absolute', bottom: 228, right: 14, zIndex: 1000,
+          width: 44, height: 44, borderRadius: 12,
+          background: tracking ? '#4F9FFF' : 'rgba(10,20,32,0.9)',
+          border: `1.5px solid ${tracking ? '#4F9FFF' : '#1E2F42'}`,
+          display: 'grid', placeItems: 'center', cursor: 'pointer',
+          boxShadow: tracking ? '0 0 0 4px rgba(79,159,255,0.25),0 4px 14px rgba(0,0,0,0.5)' : '0 4px 14px rgba(0,0,0,0.5)',
+          backdropFilter: 'blur(10px)',
+        }}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={tracking ? 'white' : '#7E94AE'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+        </svg>
+      </button>
+
+      {/* Follow mode chip */}
+      {tracking && (
+        <button onClick={() => setFollow(f => !f)} style={{
+          position: 'absolute', bottom: 280, right: 14, zIndex: 1000,
+          padding: '5px 11px', borderRadius: 99, cursor: 'pointer',
+          background: 'rgba(10,20,32,0.9)', border: `1px solid ${follow ? '#4F9FFF' : '#1E2F42'}`,
+          color: follow ? '#4F9FFF' : '#7E94AE', fontSize: 11.5, fontWeight: 600,
+          backdropFilter: 'blur(10px)',
+        }}>
+          {follow ? '● Following' : '○ Follow me'}
+        </button>
+      )}
+
+      {/* AIS vessel count badge */}
+      {aisConnected && vesselList.length > 0 && (
+        <div style={{
+          position: 'absolute', top: 56, right: 14, zIndex: 1000,
+          padding: '5px 10px', borderRadius: 99,
+          background: 'rgba(10,20,32,0.9)', border: '1px solid #1E2F42',
+          backdropFilter: 'blur(10px)',
+          display: 'flex', alignItems: 'center', gap: 6,
+        }}>
+          <div style={{ width: 6, height: 6, borderRadius: 99, background: '#4ADE80', boxShadow: '0 0 6px #4ADE80' }}/>
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: '#F1F5F9' }}>{vesselList.length} vessels nearby</span>
+        </div>
+      )}
+
+      {/* GPS error */}
+      {gpsError && (
+        <div style={{
+          position: 'absolute', bottom: 330, left: 14, right: 14, zIndex: 1000,
+          padding: '10px 14px', borderRadius: 10,
+          background: 'rgba(63,20,24,0.95)', border: '1px solid #7A2530',
+          color: '#FF6B6B', fontSize: 13,
+        }}>
+          {gpsError}
+        </div>
+      )}
+
+      {/* Map attribution (small) */}
+      <div style={{
+        position: 'absolute', bottom: 8, left: 8, zIndex: 1000,
+        fontSize: 9, color: 'rgba(255,255,255,0.4)',
+      }}>
+        © OpenStreetMap · OpenSeaMap
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Marine map (legacy SVG — kept for reference)
 // ─────────────────────────────────────────────────────────────
 function MarineMap({ accent, route, routeProgress = 1 }) {
   const { from = 'Start', to = 'Destination' } = route || {};
@@ -1051,14 +1311,12 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
 
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', inset: 0 }}>
-        <MarineMap accent={accent} route={route} routeProgress={routeProgress}/>
-      </div>
+      <LiveMap accent={accent} route={route}/>
 
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 100,
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 100, zIndex: 500,
         background: 'linear-gradient(180deg, rgba(6,21,32,0.7), transparent)', pointerEvents: 'none' }}/>
 
-      <div style={{ position: 'absolute', top: 12, left: 16, right: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ position: 'absolute', top: 12, left: 16, right: 16, zIndex: 500, display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px 8px 10px',
           background: 'rgba(15,26,38,0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
           borderRadius: 99, border: '1px solid #1E2F42' }}>
@@ -1071,7 +1329,7 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
       </div>
 
       <div style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0,
+        position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 500,
         background: 'linear-gradient(180deg, rgba(11,26,38,0.96), #0A1420 30%)',
         backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
         borderTopLeftRadius: 28, borderTopRightRadius: 28,
