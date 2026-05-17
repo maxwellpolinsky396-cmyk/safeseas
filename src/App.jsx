@@ -21,7 +21,7 @@ const ACCENT_OPTIONS = {
 const STATUS = {
   go:    { bg: '#0F3D2E', fg: '#34E0A0', border: '#1F6B4D', label: 'SAFE TO GO' },
   wait:  { bg: '#3F2E0A', fg: '#F5B547', border: '#7A5A18', label: 'WAIT' },
-  nogo:  { bg: '#3F1418', fg: '#FF6B6B', border: '#7A2530', label: 'NOT TODAY' },
+  nogo:  { bg: '#3F1418', fg: '#FF6B6B', border: '#7A2530', label: 'NO-GO' },
 };
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
