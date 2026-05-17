@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+server/node_modules/
+
+# Build output
+dist/
+
+# Environment — contains live API keys, never commit
+server/.env
+
+# Local data store — contains user accounts and sessions
+server/data.json
+
+# Claude Code project memory (local only)
+.claude/
+
+# macOS
+.DS_Store

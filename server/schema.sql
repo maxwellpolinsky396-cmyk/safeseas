@@ -1,0 +1,23 @@
+-- Schema for SafeSeas (MySQL)
+CREATE TABLE IF NOT EXISTS boats (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  type VARCHAR(128),
+  year VARCHAR(32),
+  length VARCHAR(64),
+  waveLim FLOAT,
+  windLim FLOAT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS trips (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255),
+  `from` VARCHAR(255),
+  `to` VARCHAR(255),
+  notes TEXT,
+  status VARCHAR(32),
+  boatId INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
