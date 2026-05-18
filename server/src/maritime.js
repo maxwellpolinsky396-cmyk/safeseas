@@ -247,19 +247,41 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
   for (const lat of lats) for (const lon of lons) grid.push({ lat, lon });
   console.log(`A* grid: ${grid.length} pts (${lats.length}×${lons.length}) step=${stepDeg}° dist=${distKm.toFixed(0)}km margin=${margin}°`);
 
-  // GEBCO in batches (rate-limit: 1 req/s).
-  // Threshold -2m (not 0) because GEBCO's 460m cells average barrier island terrain
-  // with adjacent water, producing near-zero values that would incorrectly mark land as water.
-  // The ICW and coastal sounds are dredged/natural at -4m or deeper, so they pass this threshold.
-  const waterCells = new Map();
+  // Build full GEBCO elevation map for every grid cell.
+  const gebcoFull = new Map();
   const BATCH = 100;
   for (let i = 0; i < grid.length; i += BATCH) {
     const batch = grid.slice(i, i + BATCH);
     const elevs = await _gebco(batch);
     for (let j = 0; j < batch.length; j++) {
-      if (elevs[j] < -2) waterCells.set(`${batch[j].lat},${batch[j].lon}`, elevs[j]);
+      gebcoFull.set(`${batch[j].lat},${batch[j].lon}`, elevs[j]);
     }
     if (i + BATCH < grid.length) await new Promise(r => setTimeout(r, 1150));
+  }
+
+  // Cells with GEBCO < -5m are unambiguously deep water (open ocean, sounds, deep channels).
+  const waterCells = new Map();
+  for (const [key, elev] of gebcoFull) {
+    if (elev < -5) waterCells.set(key, elev);
+  }
+
+  // The ambiguous coastal zone (-5m to 0m) contains both legitimate water (ICW channels,
+  // tidal creeks) and barrier island cells whose GEBCO value is dragged negative by adjacent
+  // deep water in the same 460m cell. SRTM 30m resolves the ambiguity: it returns null for
+  // actual water bodies (ICW, sounds, ocean) and positive elevation for dry land (islands).
+  const ambiguous = grid.filter(p => {
+    const e = gebcoFull.get(`${p.lat},${p.lon}`);
+    return e !== undefined && e >= -5 && e < 0;
+  });
+  if (ambiguous.length > 0) {
+    console.log(`SRTM-verifying ${ambiguous.length} ambiguous coastal cells…`);
+    const srtmLand = await _srtmIsLand(ambiguous);
+    for (let i = 0; i < ambiguous.length; i++) {
+      if (!srtmLand[i]) {
+        const key = `${ambiguous[i].lat},${ambiguous[i].lon}`;
+        waterCells.set(key, gebcoFull.get(key));
+      }
+    }
   }
 
   const nearKey = (lat, lon) => {
@@ -280,10 +302,22 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
 
   console.log(`Water cells: ${waterCells.size}/${grid.length}  ${astarStart}→${astarEnd}`);
 
-  const path = _astar(waterCells, astarStart, astarEnd, lats, lons);
+  let path = _astar(waterCells, astarStart, astarEnd, lats, lons);
   if (!path || path.length < 2) {
-    console.warn('A* found no path — fallback to straight line');
-    return [[fromLat, fromLon], [toLat, toLon]];
+    // Strict SRTM-filtered cells left a gap in the water network (API variability).
+    // Retry with all GEBCO < 0 cells; SRTM post-validation will fix any land crossings.
+    console.warn('A* failed on strict cells — retrying with GEBCO < 0 fallback');
+    const looseWater = new Map();
+    for (const [key, elev] of gebcoFull) {
+      if (elev < 0) looseWater.set(key, elev);
+    }
+    const looseStart = _nearestWaterCell(astarStart, looseWater, lats, lons);
+    const looseEnd   = _nearestWaterCell(astarEnd,   looseWater, lats, lons);
+    path = _astar(looseWater, looseStart, looseEnd, lats, lons);
+    if (!path || path.length < 2) {
+      console.warn('A* found no path even with loose cells — straight line fallback');
+      return [[fromLat, fromLon], [toLat, toLon]];
+    }
   }
 
   let waypoints = path.map(k => k.split(',').map(Number));
