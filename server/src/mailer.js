@@ -20,9 +20,14 @@ async function sendResetCode(email, code) {
 
   const from = process.env.RESEND_FROM || 'Safe Seas <onboarding@resend.dev>';
 
+  // Resend free tier requires a verified domain to send to arbitrary recipients.
+  // Until a domain is verified, redirect all outgoing mail to the account owner.
+  const TEST_OVERRIDE = 'noreplysafeseas@gmail.com';
+  const recipient = TEST_OVERRIDE;
+
   const { error } = await client.emails.send({
     from,
-    to: email,
+    to: recipient,
     subject: `${code} is your Safe Seas reset code`,
     text: [
       `Your Safe Seas password reset code is: ${code}`,
@@ -44,15 +49,16 @@ async function sendResetCode(email, code) {
   });
 
   if (error) {
-    // Resend rejected the send (e.g. unverified domain) — print to console so dev flow still works
     console.log('\n' + '─'.repeat(52));
-    console.log('  Safe Seas — Password Reset Code (Resend blocked)');
+    console.log('  Safe Seas — Password Reset Code (Resend error)');
     console.log('─'.repeat(52));
     console.log(`  Resend error : ${error.message}`);
-    console.log(`  Email        : ${email}`);
+    console.log(`  Intended for : ${email}`);
+    console.log(`  Sent to      : ${recipient}`);
     console.log(`  Code         : ${code}`);
-    console.log('  Fix: verify a domain at resend.com/domains');
     console.log('─'.repeat(52) + '\n');
+  } else {
+    console.log(`Reset code sent to ${recipient} (requested by ${email})`);
   }
 }
 

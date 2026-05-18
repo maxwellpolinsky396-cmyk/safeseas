@@ -43,17 +43,28 @@ async function _gebco(points) {
 }
 
 // SRTM 30m — land only. Returns elevation for land, null for ocean.
-// true = definitely land (elevation > 0.5 m), false = water / unknown.
+// true = definitely land (elevation > 0.1 m), false = water / unknown.
 async function _srtmIsLand(points) {
   if (!points.length) return [];
+  // SRTM API limit: 100 locations per request — batch if needed
+  if (points.length > 100) {
+    const results = [];
+    for (let i = 0; i < points.length; i += 100) {
+      const chunk = points.slice(i, i + 100);
+      const partial = await _srtmIsLand(chunk);
+      results.push(...partial);
+      if (i + 100 < points.length) await new Promise(r => setTimeout(r, 1100));
+    }
+    return results;
+  }
   const locs = points.map(p => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join('|');
   try {
     const res = await _fetch(`https://api.opentopodata.org/v1/srtm30m?locations=${locs}`,
-      { headers: { 'User-Agent': 'SafeSeas/1.0' }, signal: AbortSignal.timeout(15000) });
+      { headers: { 'User-Agent': 'SafeSeas/1.0' }, signal: AbortSignal.timeout(20000) });
     if (!res.ok) return points.map(() => false);
     const data = await res.json();
     if (data.status !== 'OK') return points.map(() => false);
-    return (data.results || []).map(r => typeof r.elevation === 'number' && r.elevation > 0.5);
+    return (data.results || []).map(r => typeof r.elevation === 'number' && r.elevation > 0.1);
   } catch { return points.map(() => false); }
 }
 
@@ -123,9 +134,10 @@ function _simplify(pts, tol=0.002){if(pts.length<=2)return pts;let mx=0,mi=0;for
 
 // ─── SRTM segment validation + land bypass ───────────────────────────────────
 
-// Sample N interior points along segment and return true if any is on land.
-// Returns { isLand: bool, landPt: {lat, lon, t} | null }
-async function _checkSegment(la1, lo1, la2, lo2, n = 12) {
+// Sample interior points along segment at ~1 per 50m; return first land point or null.
+async function _checkSegment(la1, lo1, la2, lo2) {
+  const segLenKm = Math.hypot((la2 - la1) * 111, (lo2 - lo1) * 111 * Math.cos(la1 * Math.PI / 180));
+  const n = Math.max(15, Math.min(200, Math.ceil(segLenKm * 1000 / 50)));
   const samples = Array.from({ length: n }, (_, k) => {
     const t = (k + 1) / (n + 1);
     return { lat: +(la1 + t * (la2 - la1)).toFixed(5), lon: +(lo1 + t * (lo2 - lo1)).toFixed(5), t };
@@ -135,16 +147,25 @@ async function _checkSegment(la1, lo1, la2, lo2, n = 12) {
   return first ?? null;
 }
 
-// Given a land point on segment [P1→P2], try perpendicular offsets to find water.
+// Given a land point on segment [P1→P2], try perpendicular and diagonal offsets to find water.
 async function _bypass(landLat, landLon, la1, lo1, la2, lo2) {
   const dx = lo2 - lo1, dy = la2 - la1;
   const len = Math.hypot(dx, dy) || 1;
+  // perpendicular unit vectors (both sides)
   const perpLat = -dx / len, perpLon = dy / len;
+  // along-segment unit vector
+  const fwdLat = dy / len, fwdLon = dx / len;
 
-  for (const scale of [0.025, 0.05, 0.08, 0.13, 0.2]) {
+  for (const scale of [0.015, 0.03, 0.055, 0.09, 0.14, 0.2, 0.28]) {
     const cands = [
+      // perpendicular offsets (left/right)
       { lat: +(landLat + perpLat * scale).toFixed(5), lon: +(landLon + perpLon * scale).toFixed(5) },
       { lat: +(landLat - perpLat * scale).toFixed(5), lon: +(landLon - perpLon * scale).toFixed(5) },
+      // diagonal (forward-left, forward-right, back-left, back-right)
+      { lat: +(landLat + perpLat * scale + fwdLat * scale).toFixed(5), lon: +(landLon + perpLon * scale + fwdLon * scale).toFixed(5) },
+      { lat: +(landLat - perpLat * scale + fwdLat * scale).toFixed(5), lon: +(landLon - perpLon * scale + fwdLon * scale).toFixed(5) },
+      { lat: +(landLat + perpLat * scale - fwdLat * scale).toFixed(5), lon: +(landLon + perpLon * scale - fwdLon * scale).toFixed(5) },
+      { lat: +(landLat - perpLat * scale - fwdLat * scale).toFixed(5), lon: +(landLon - perpLon * scale - fwdLon * scale).toFixed(5) },
     ];
     const land = await _srtmIsLand(cands);
     const w = cands.find((_, j) => !land[j]);
@@ -155,7 +176,7 @@ async function _bypass(landLat, landLon, la1, lo1, la2, lo2) {
 
 // Walk every segment; insert a bypass waypoint for any that cross land.
 // Iterates up to maxPasses to handle routes with multiple crossings.
-async function _fixLandCrossings(waypoints, maxPasses = 3) {
+async function _fixLandCrossings(waypoints, maxPasses = 6) {
   for (let pass = 0; pass < maxPasses; pass++) {
     let changed = false;
     const out = [waypoints[0]];
@@ -178,6 +199,29 @@ async function _fixLandCrossings(waypoints, maxPasses = 3) {
   return waypoints;
 }
 
+// ─── Nearest water cell ───────────────────────────────────────────────────────
+
+// Find the nearest water cell to a given grid key, searching outward in rings.
+function _nearestWaterCell(key, waterCells, lats, lons) {
+  if (waterCells.has(key)) return key;
+  const [cLat, cLon] = key.split(',').map(Number);
+  const ci = lats.findIndex(v => v === cLat);
+  const cj = lons.findIndex(v => v === cLon);
+  if (ci < 0 || cj < 0) return key;
+  for (let r = 1; r <= 8; r++) {
+    for (let di = -r; di <= r; di++) {
+      for (let dj = -r; dj <= r; dj++) {
+        if (Math.abs(di) !== r && Math.abs(dj) !== r) continue; // perimeter only
+        const ni = ci + di, nj = cj + dj;
+        if (ni < 0 || ni >= lats.length || nj < 0 || nj >= lons.length) continue;
+        const nKey = `${lats[ni]},${lons[nj]}`;
+        if (waterCells.has(nKey)) return nKey;
+      }
+    }
+  }
+  return key;
+}
+
 // ─── Main route builder ───────────────────────────────────────────────────────
 
 async function _waterRoute(fromLat, fromLon, toLat, toLon) {
@@ -185,9 +229,10 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
     (toLat - fromLat) * 111,
     (toLon - fromLon) * 111 * Math.cos(fromLat * Math.PI / 180)
   );
-  // Finer grid for short routes — catches narrower obstacles
   const stepDeg = distKm < 50 ? 0.012 : distKm < 130 ? 0.022 : 0.05;
-  const margin  = stepDeg * 5;
+  // Large margin for short coastal routes so ICW channels and sounds are always in the grid.
+  // A 0.06° margin was too tight for routes running parallel to barrier islands.
+  const margin = distKm < 50 ? 0.15 : distKm < 130 ? Math.max(0.12, stepDeg * 6) : stepDeg * 5;
 
   const minLat = +(Math.min(fromLat, toLat) - margin).toFixed(4);
   const maxLat = +(Math.max(fromLat, toLat) + margin).toFixed(4);
@@ -200,16 +245,19 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
 
   const grid = [];
   for (const lat of lats) for (const lon of lons) grid.push({ lat, lon });
-  console.log(`A* grid: ${grid.length} pts (${lats.length}×${lons.length}) step=${stepDeg}° dist=${distKm.toFixed(0)}km`);
+  console.log(`A* grid: ${grid.length} pts (${lats.length}×${lons.length}) step=${stepDeg}° dist=${distKm.toFixed(0)}km margin=${margin}°`);
 
-  // GEBCO in batches (rate-limit: 1 req/s)
+  // GEBCO in batches (rate-limit: 1 req/s).
+  // Threshold -2m (not 0) because GEBCO's 460m cells average barrier island terrain
+  // with adjacent water, producing near-zero values that would incorrectly mark land as water.
+  // The ICW and coastal sounds are dredged/natural at -4m or deeper, so they pass this threshold.
   const waterCells = new Map();
   const BATCH = 100;
   for (let i = 0; i < grid.length; i += BATCH) {
     const batch = grid.slice(i, i + BATCH);
     const elevs = await _gebco(batch);
     for (let j = 0; j < batch.length; j++) {
-      if (elevs[j] < 0) waterCells.set(`${batch[j].lat},${batch[j].lon}`, elevs[j]);
+      if (elevs[j] < -2) waterCells.set(`${batch[j].lat},${batch[j].lon}`, elevs[j]);
     }
     if (i + BATCH < grid.length) await new Promise(r => setTimeout(r, 1150));
   }
@@ -219,14 +267,20 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
     const nO = lons.reduce((a, b) => Math.abs(a - lon) < Math.abs(b - lon) ? a : b);
     return `${nL},${nO}`;
   };
+
   const startKey = nearKey(fromLat, fromLon);
   const endKey   = nearKey(toLat, toLon);
   if (!waterCells.has(startKey)) waterCells.set(startKey, -5);
   if (!waterCells.has(endKey))   waterCells.set(endKey,   -5);
 
-  console.log(`Water cells: ${waterCells.size}/${grid.length}  ${startKey}→${endKey}`);
+  // If start/end landed on a land cell, snap to nearest actual water cell so
+  // A* can connect into the water network rather than being isolated.
+  const astarStart = _nearestWaterCell(startKey, waterCells, lats, lons);
+  const astarEnd   = _nearestWaterCell(endKey,   waterCells, lats, lons);
 
-  const path = _astar(waterCells, startKey, endKey, lats, lons);
+  console.log(`Water cells: ${waterCells.size}/${grid.length}  ${astarStart}→${astarEnd}`);
+
+  const path = _astar(waterCells, astarStart, astarEnd, lats, lons);
   if (!path || path.length < 2) {
     console.warn('A* found no path — fallback to straight line');
     return [[fromLat, fromLon], [toLat, toLon]];
