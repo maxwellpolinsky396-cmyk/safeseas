@@ -1,4 +1,23 @@
 const _fetch = globalThis.fetch;
+const path = require('path');
+const fs   = require('fs');
+const booleanPointInPolygon = require('@turf/boolean-point-in-polygon').default;
+const { point: turfPoint }  = require('@turf/helpers');
+
+// ─── Ocean polygon (Natural Earth 10m) ───────────────────────────────────────
+
+let _oceanFeature = null;
+function _loadOcean() {
+  if (_oceanFeature) return _oceanFeature;
+  const file = path.join(__dirname, '../data/ne_10m_ocean.geojson');
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  _oceanFeature = data.features[0];
+  return _oceanFeature;
+}
+
+function _isWater(lat, lon) {
+  return booleanPointInPolygon(turfPoint([lon, lat]), _loadOcean());
+}
 
 // ─── Nominatim marina snap ────────────────────────────────────────────────────
 
@@ -247,41 +266,29 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
   for (const lat of lats) for (const lon of lons) grid.push({ lat, lon });
   console.log(`A* grid: ${grid.length} pts (${lats.length}×${lons.length}) step=${stepDeg}° dist=${distKm.toFixed(0)}km margin=${margin}°`);
 
-  // Build full GEBCO elevation map for every grid cell.
-  const gebcoFull = new Map();
+  // Classify grid cells using the Natural Earth 10m ocean polygon.
+  // This is authoritative: barrier islands (Cumberland, Jekyll, Amelia, etc.) are land
+  // in the polygon; Atlantic, sounds, and bays are water. No elevation API ambiguity.
+  // GEBCO is still used for depth-weighting inside A* (prefer deeper cells).
+  const waterCells = new Map();
+  const gebcoFull  = new Map();
+
+  // First pass: mark ocean cells via polygon (instant, offline).
+  const oceanGrid = grid.filter(p => _isWater(p.lat, p.lon));
+  console.log(`Ocean polygon: ${oceanGrid.length}/${grid.length} cells are water`);
+
+  // Second pass: fetch GEBCO depth only for water cells (smaller batch set).
   const BATCH = 100;
-  for (let i = 0; i < grid.length; i += BATCH) {
-    const batch = grid.slice(i, i + BATCH);
+  for (let i = 0; i < oceanGrid.length; i += BATCH) {
+    const batch = oceanGrid.slice(i, i + BATCH);
     const elevs = await _gebco(batch);
     for (let j = 0; j < batch.length; j++) {
-      gebcoFull.set(`${batch[j].lat},${batch[j].lon}`, elevs[j]);
+      const key = `${batch[j].lat},${batch[j].lon}`;
+      const depth = elevs[j] < 0 ? elevs[j] : -1; // treat near-zero as shallow water
+      waterCells.set(key, depth);
+      gebcoFull.set(key, depth);
     }
-    if (i + BATCH < grid.length) await new Promise(r => setTimeout(r, 1150));
-  }
-
-  // Cells with GEBCO < -5m are unambiguously deep water (open ocean, sounds, deep channels).
-  const waterCells = new Map();
-  for (const [key, elev] of gebcoFull) {
-    if (elev < -5) waterCells.set(key, elev);
-  }
-
-  // The ambiguous coastal zone (-5m to 0m) contains both legitimate water (ICW channels,
-  // tidal creeks) and barrier island cells whose GEBCO value is dragged negative by adjacent
-  // deep water in the same 460m cell. SRTM 30m resolves the ambiguity: it returns null for
-  // actual water bodies (ICW, sounds, ocean) and positive elevation for dry land (islands).
-  const ambiguous = grid.filter(p => {
-    const e = gebcoFull.get(`${p.lat},${p.lon}`);
-    return e !== undefined && e >= -5 && e < 0;
-  });
-  if (ambiguous.length > 0) {
-    console.log(`SRTM-verifying ${ambiguous.length} ambiguous coastal cells…`);
-    const srtmLand = await _srtmIsLand(ambiguous);
-    for (let i = 0; i < ambiguous.length; i++) {
-      if (!srtmLand[i]) {
-        const key = `${ambiguous[i].lat},${ambiguous[i].lon}`;
-        waterCells.set(key, gebcoFull.get(key));
-      }
-    }
+    if (i + BATCH < oceanGrid.length) await new Promise(r => setTimeout(r, 1150));
   }
 
   const nearKey = (lat, lon) => {
@@ -292,32 +299,22 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
 
   const startKey = nearKey(fromLat, fromLon);
   const endKey   = nearKey(toLat, toLon);
-  if (!waterCells.has(startKey)) waterCells.set(startKey, -5);
-  if (!waterCells.has(endKey))   waterCells.set(endKey,   -5);
 
-  // If start/end landed on a land cell, snap to nearest actual water cell so
-  // A* can connect into the water network rather than being isolated.
+  // Snap to nearest actual ocean cell BEFORE any forcing so _nearestWaterCell
+  // searches the real water network, not a forced isolated land cell.
   const astarStart = _nearestWaterCell(startKey, waterCells, lats, lons);
   const astarEnd   = _nearestWaterCell(endKey,   waterCells, lats, lons);
+
+  // If snapping failed (no water within search radius), force the exact point.
+  if (!waterCells.has(astarStart)) waterCells.set(astarStart, -5);
+  if (!waterCells.has(astarEnd))   waterCells.set(astarEnd,   -5);
 
   console.log(`Water cells: ${waterCells.size}/${grid.length}  ${astarStart}→${astarEnd}`);
 
   let path = _astar(waterCells, astarStart, astarEnd, lats, lons);
   if (!path || path.length < 2) {
-    // Strict SRTM-filtered cells left a gap in the water network (API variability).
-    // Retry with all GEBCO < 0 cells; SRTM post-validation will fix any land crossings.
-    console.warn('A* failed on strict cells — retrying with GEBCO < 0 fallback');
-    const looseWater = new Map();
-    for (const [key, elev] of gebcoFull) {
-      if (elev < 0) looseWater.set(key, elev);
-    }
-    const looseStart = _nearestWaterCell(astarStart, looseWater, lats, lons);
-    const looseEnd   = _nearestWaterCell(astarEnd,   looseWater, lats, lons);
-    path = _astar(looseWater, looseStart, looseEnd, lats, lons);
-    if (!path || path.length < 2) {
-      console.warn('A* found no path even with loose cells — straight line fallback');
-      return [[fromLat, fromLon], [toLat, toLon]];
-    }
+    console.warn('A* found no path — straight line fallback');
+    return [[fromLat, fromLon], [toLat, toLon]];
   }
 
   let waypoints = path.map(k => k.split(',').map(Number));
