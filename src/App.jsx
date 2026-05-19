@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet'
-import L from 'leaflet'
+import Map, { Marker, Popup, Source, Layer } from 'react-map-gl/maplibre'
+import 'maplibre-gl/dist/maplibre-gl.css'
 import { IOSDevice, IOSStatusBar } from './ios-frame'
 import { useTweaks, TweaksPanel, TweakSection, TweakColor, TweakRadio, TweakToggle } from './tweaks-panel'
 
@@ -206,85 +206,85 @@ function BoatArt({ type, color = '#F1F5F9', size = 80 }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// LIVE MAP — Leaflet + OpenSeaMap + GPS + AIS vessel traffic
+// LIVE MAP — MapLibre GL + ESRI Satellite + 3D Terrain + AIS
 // ─────────────────────────────────────────────────────────────
 const AISSTREAM_KEY = import.meta.env.VITE_AISSTREAM_KEY || '';
 
 function _vesselColor(typeCode) {
-  if (typeCode >= 60 && typeCode <= 69) return '#4ADE80'; // passenger
-  if (typeCode >= 70 && typeCode <= 79) return '#38BDF8'; // cargo
-  if (typeCode >= 80 && typeCode <= 89) return '#F87171'; // tanker
-  if (typeCode === 30)                  return '#FB923C'; // fishing
-  if (typeCode === 36 || typeCode === 37) return '#818CF8'; // sailing
+  if (typeCode >= 60 && typeCode <= 69) return '#4ADE80';
+  if (typeCode >= 70 && typeCode <= 79) return '#38BDF8';
+  if (typeCode >= 80 && typeCode <= 89) return '#F87171';
+  if (typeCode === 30)                  return '#FB923C';
+  if (typeCode === 36 || typeCode === 37) return '#818CF8';
   return '#94A3B8';
 }
 
-function _vesselIcon(cog, color) {
-  return L.divIcon({
-    className: '',
-    html: `<svg width="14" height="18" viewBox="0 0 14 18" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(${(cog || 0)}deg);display:block;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6))"><polygon points="7,0 14,18 7,13 0,18" fill="${color}"/></svg>`,
-    iconSize: [14, 18],
-    iconAnchor: [7, 9],
-  });
-}
-
-const _gpsIcon = L.divIcon({
-  className: '',
-  html: `<div style="width:16px;height:16px;background:#4F9FFF;border:3px solid white;border-radius:50%;box-shadow:0 0 0 5px rgba(79,159,255,0.28),0 2px 6px rgba(0,0,0,0.5)"></div>`,
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
-});
-
-function _dotIcon(color) {
-  return L.divIcon({
-    className: '',
-    html: `<div style="width:10px;height:10px;background:white;border:2.5px solid ${color};border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.5)"></div>`,
-    iconSize: [10, 10],
-    iconAnchor: [5, 5],
-  });
-}
-
-function _pinIcon(color) {
-  return L.divIcon({
-    className: '',
-    html: `<svg width="16" height="22" viewBox="0 0 16 22" xmlns="http://www.w3.org/2000/svg" style="display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.5))"><path d="M8 0C3.6 0 0 3.6 0 8c0 5.4 8 14 8 14s8-8.6 8-14c0-4.4-3.6-8-8-8z" fill="${color}"/><circle cx="8" cy="8" r="3.5" fill="white"/></svg>`,
-    iconSize: [16, 22],
-    iconAnchor: [8, 22],
-  });
-}
-
-function MapFollower({ position, follow }) {
-  const map = useMap();
-  const prev = useRef(null);
-  useEffect(() => {
-    if (!follow || !position) return;
-    const { lat, lng } = position;
-    if (prev.current && Math.abs(prev.current.lat - lat) < 0.00005 && Math.abs(prev.current.lng - lng) < 0.00005) return;
-    prev.current = { lat, lng };
-    map.setView([lat, lng], map.getZoom(), { animate: true });
-  }, [position, follow]);
-  return null;
-}
+const MAP_STYLE = {
+  version: 8,
+  sources: {
+    esri: {
+      type: 'raster',
+      tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+      tileSize: 256,
+      attribution: '© Esri, DigitalGlobe',
+      maxzoom: 19,
+    },
+    openseamap: {
+      type: 'raster',
+      tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: '© OpenSeaMap',
+      maxzoom: 18,
+    },
+    terrarium: {
+      type: 'raster-dem',
+      tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+      encoding: 'terrarium',
+      tileSize: 256,
+      maxzoom: 15,
+    },
+  },
+  layers: [
+    { id: 'esri-tiles', type: 'raster', source: 'esri' },
+    { id: 'openseamap-tiles', type: 'raster', source: 'openseamap', paint: { 'raster-opacity': 0.85 } },
+  ],
+  terrain: { source: 'terrarium', exaggeration: 1.5 },
+};
 
 function LiveMap({ route, accent, routingActive }) {
+  const mapRef = useRef(null);
   const [userPos, setUserPos] = useState(null);
   const [tracking, setTracking] = useState(false);
   const [follow, setFollow] = useState(false);
   const [vessels, setVessels] = useState({});
   const [gpsError, setGpsError] = useState(null);
   const [aisConnected, setAisConnected] = useState(false);
+  const [selectedVessel, setSelectedVessel] = useState(null);
   const watchRef = useRef(null);
   const wsRef = useRef(null);
 
-  const defaultCenter = [27.4976, -82.7196];
+  const DEFAULT_LNG = -82.7196;
+  const DEFAULT_LAT = 27.4976;
+
   const fromCoords = route?.fromLat ? [parseFloat(route.fromLat), parseFloat(route.fromLon)] : null;
   const toCoords   = route?.toLat   ? [parseFloat(route.toLat),   parseFloat(route.toLon)]   : null;
-  // Snapped marina coords override the raw geocoded point for markers
   const depCoords = route?.fromSnapped ? [route.fromSnapped.lat, route.fromSnapped.lon] : fromCoords;
   const arrCoords = route?.toSnapped   ? [route.toSnapped.lat,   route.toSnapped.lon]   : toCoords;
-  const center = userPos
-    ? [userPos.lat, userPos.lng]
-    : (depCoords || defaultCenter);
+
+  const initLat = depCoords ? depCoords[0] : DEFAULT_LAT;
+  const initLng = depCoords ? depCoords[1] : DEFAULT_LNG;
+
+  // Fly to departure when route loads
+  useEffect(() => {
+    if (!mapRef.current || !depCoords) return;
+    mapRef.current.flyTo({ center: [depCoords[1], depCoords[0]], duration: 1200 });
+  }, [depCoords?.[0], depCoords?.[1]]);
+
+  // Follow GPS position
+  useEffect(() => {
+    if (!follow || !userPos || !mapRef.current) return;
+    mapRef.current.flyTo({ center: [userPos.lng, userPos.lat], duration: 800 });
+  }, [follow, Math.round((userPos?.lat ?? 0) * 1000), Math.round((userPos?.lng ?? 0) * 1000)]);
 
   const startGPS = () => {
     if (!navigator.geolocation) { setGpsError('GPS not supported by this browser'); return; }
@@ -306,12 +306,10 @@ function LiveMap({ route, accent, routingActive }) {
     watchRef.current = null;
   };
 
-  // AIS center: prefer live GPS, fall back to route departure point
   const aisCenter = userPos
     ? { lat: userPos.lat, lng: userPos.lng }
     : (depCoords ? { lat: depCoords[0], lng: depCoords[1] } : null);
 
-  // AIS WebSocket — resubscribes when center moves ~0.1°
   useEffect(() => {
     if (!aisCenter || !AISSTREAM_KEY) return;
     const { lat, lng } = aisCenter;
@@ -360,58 +358,85 @@ function LiveMap({ route, accent, routingActive }) {
 
   const vesselList = Object.values(vessels);
 
+  // GeoJSON route line (MapLibre uses [lon, lat])
+  const routeCoords = route?.waypoints?.length >= 2
+    ? route.waypoints.map(([lat, lon]) => [lon, lat])
+    : (depCoords && arrCoords ? [[depCoords[1], depCoords[0]], [arrCoords[1], arrCoords[0]]] : null);
+
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
-      <MapContainer center={center} zoom={12} style={{ width: '100%', height: '100%' }} zoomControl={false} attributionControl={false}>
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"/>
-        <TileLayer url="https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png" opacity={0.85}/>
-
-        {/* Route line — maritime waypoints when available, straight-line fallback */}
-        {route?.waypoints?.length >= 2 && (
-          <Polyline positions={route.waypoints} color={accent} weight={3} dashArray="10 6" opacity={0.9}/>
+      <Map
+        ref={mapRef}
+        mapStyle={MAP_STYLE}
+        initialViewState={{ longitude: initLng, latitude: initLat, zoom: 12, pitch: 60, bearing: 0 }}
+        style={{ width: '100%', height: '100%' }}
+        attributionControl={false}
+      >
+        {/* Route line — glow + dashed overlay */}
+        {routeCoords && (
+          <Source id="route" type="geojson" data={{ type: 'Feature', geometry: { type: 'LineString', coordinates: routeCoords } }}>
+            <Layer id="route-glow" type="line"
+              layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+              paint={{ 'line-color': accent, 'line-width': 8, 'line-opacity': 0.3, 'line-blur': 5 }}
+            />
+            <Layer id="route-line" type="line"
+              layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+              paint={{ 'line-color': accent, 'line-width': 3, 'line-opacity': 0.9, 'line-dasharray': [2, 1.5] }}
+            />
+          </Source>
         )}
-        {!route?.waypoints && depCoords && arrCoords && (
-          <Polyline positions={[depCoords, arrCoords]} color={accent} weight={3} dashArray="10 6" opacity={0.9}/>
-        )}
 
+        {/* Departure dot */}
         {depCoords && (
-          <Marker position={depCoords} icon={_dotIcon(accent)}>
-            <Popup>
-              <strong>Departure</strong>{route?.fromSnapped?.name ? <><br/><span style={{ fontSize: 12 }}>{route.fromSnapped.name}</span></> : null}
-              <br/><span style={{ fontSize: 11, color: '#888' }}>{route?.from}</span>
-            </Popup>
-          </Marker>
-        )}
-        {arrCoords && (
-          <Marker position={arrCoords} icon={_pinIcon(accent)}>
-            <Popup>
-              <strong>Destination</strong>{route?.toSnapped?.name ? <><br/><span style={{ fontSize: 12 }}>{route.toSnapped.name}</span></> : null}
-              <br/><span style={{ fontSize: 11, color: '#888' }}>{route?.to}</span>
-            </Popup>
+          <Marker longitude={depCoords[1]} latitude={depCoords[0]} anchor="center">
+            <div style={{ width: 10, height: 10, background: 'white', border: `2.5px solid ${accent}`, borderRadius: '50%', boxShadow: '0 1px 4px rgba(0,0,0,0.6)', cursor: 'default' }}/>
           </Marker>
         )}
 
+        {/* Arrival pin */}
+        {arrCoords && (
+          <Marker longitude={arrCoords[1]} latitude={arrCoords[0]} anchor="bottom">
+            <svg width="16" height="22" viewBox="0 0 16 22" style={{ display: 'block', filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.6))' }}>
+              <path d="M8 0C3.6 0 0 3.6 0 8c0 5.4 8 14 8 14s8-8.6 8-14c0-4.4-3.6-8-8-8z" fill={accent}/>
+              <circle cx="8" cy="8" r="3.5" fill="white"/>
+            </svg>
+          </Marker>
+        )}
+
+        {/* AIS vessel markers */}
         {vesselList.map(v => (
-          <Marker key={v.mmsi} position={[v.lat, v.lng]} icon={_vesselIcon(v.cog, _vesselColor(v.shipType))}>
-            <Popup>
-              <div style={{ minWidth: 140 }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>{v.name}</div>
-                <div style={{ fontSize: 12 }}>Speed: {v.sog?.toFixed(1) ?? '—'} kt</div>
-                <div style={{ fontSize: 12 }}>Course: {v.cog != null ? Math.round(v.cog) : '—'}°</div>
-                <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>MMSI {v.mmsi}</div>
-              </div>
-            </Popup>
+          <Marker key={v.mmsi} longitude={v.lng} latitude={v.lat} anchor="center"
+            onClick={() => setSelectedVessel(sel => sel?.mmsi === v.mmsi ? null : v)}
+          >
+            <svg width="14" height="18" viewBox="0 0 14 18"
+              style={{ transform: `rotate(${v.cog || 0}deg)`, display: 'block', filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.6))', cursor: 'pointer' }}
+            >
+              <polygon points="7,0 14,18 7,13 0,18" fill={_vesselColor(v.shipType)}/>
+            </svg>
           </Marker>
         ))}
 
-        {userPos && (
-          <Marker position={[userPos.lat, userPos.lng]} icon={_gpsIcon}>
-            <Popup>You are here<br/><span style={{ fontSize: 11 }}>±{Math.round(userPos.acc)} m accuracy</span></Popup>
-          </Marker>
+        {/* Vessel popup on click */}
+        {selectedVessel && (
+          <Popup longitude={selectedVessel.lng} latitude={selectedVessel.lat} anchor="top"
+            closeButton={true} onClose={() => setSelectedVessel(null)}
+          >
+            <div style={{ minWidth: 140, fontFamily: 'ui-sans-serif,system-ui,sans-serif', fontSize: 13 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>{selectedVessel.name}</div>
+              <div>Speed: {selectedVessel.sog?.toFixed(1) ?? '—'} kt</div>
+              <div>Course: {selectedVessel.cog != null ? Math.round(selectedVessel.cog) : '—'}°</div>
+              <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>MMSI {selectedVessel.mmsi}</div>
+            </div>
+          </Popup>
         )}
 
-        <MapFollower position={userPos} follow={follow}/>
-      </MapContainer>
+        {/* GPS position */}
+        {userPos && (
+          <Marker longitude={userPos.lng} latitude={userPos.lat} anchor="center">
+            <div style={{ width: 16, height: 16, background: '#4F9FFF', border: '3px solid white', borderRadius: '50%', boxShadow: '0 0 0 5px rgba(79,159,255,0.28),0 2px 6px rgba(0,0,0,0.5)' }}/>
+          </Marker>
+        )}
+      </Map>
 
       {/* GPS tracking button */}
       <button
@@ -485,12 +510,12 @@ function LiveMap({ route, accent, routingActive }) {
         </div>
       )}
 
-      {/* Map attribution (small) */}
+      {/* Map attribution */}
       <div style={{
         position: 'absolute', bottom: 8, left: 8, zIndex: 1000,
-        fontSize: 9, color: 'rgba(255,255,255,0.4)',
+        fontSize: 9, color: 'rgba(255,255,255,0.5)',
       }}>
-        © OpenStreetMap · OpenSeaMap
+        © Esri · OpenSeaMap
       </div>
     </div>
   );

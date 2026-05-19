@@ -61,31 +61,6 @@ async function _gebco(points) {
   } catch { return points.map(() => -10); }
 }
 
-// SRTM 30m — land only. Returns elevation for land, null for ocean.
-// true = definitely land (elevation > 0.1 m), false = water / unknown.
-async function _srtmIsLand(points) {
-  if (!points.length) return [];
-  // SRTM API limit: 100 locations per request — batch if needed
-  if (points.length > 100) {
-    const results = [];
-    for (let i = 0; i < points.length; i += 100) {
-      const chunk = points.slice(i, i + 100);
-      const partial = await _srtmIsLand(chunk);
-      results.push(...partial);
-      if (i + 100 < points.length) await new Promise(r => setTimeout(r, 1100));
-    }
-    return results;
-  }
-  const locs = points.map(p => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join('|');
-  try {
-    const res = await _fetch(`https://api.opentopodata.org/v1/srtm30m?locations=${locs}`,
-      { headers: { 'User-Agent': 'SafeSeas/1.0' }, signal: AbortSignal.timeout(20000) });
-    if (!res.ok) return points.map(() => false);
-    const data = await res.json();
-    if (data.status !== 'OK') return points.map(() => false);
-    return (data.results || []).map(r => typeof r.elevation === 'number' && r.elevation > 0.1);
-  } catch { return points.map(() => false); }
-}
 
 // ─── Min-heap ─────────────────────────────────────────────────────────────────
 
@@ -146,56 +121,72 @@ function _astar(waterCells, startKey, endKey, lats, lons) {
   return null;
 }
 
-// ─── Douglas-Peucker ─────────────────────────────────────────────────────────
+// ─── Simplification ───────────────────────────────────────────────────────────
 
 function _perp([la,lo],[la1,lo1],[la2,lo2]){const dx=la2-la1,dy=lo2-lo1,l2=dx*dx+dy*dy;if(!l2)return Math.hypot(la-la1,lo-lo1);const t=((la-la1)*dx+(lo-lo1)*dy)/l2;return Math.hypot(la-(la1+t*dx),lo-(lo1+t*dy));}
-function _simplify(pts, tol=0.002){if(pts.length<=2)return pts;let mx=0,mi=0;for(let i=1;i<pts.length-1;i++){const d=_perp(pts[i],pts[0],pts[pts.length-1]);if(d>mx){mx=d;mi=i;}}if(mx>tol)return[..._simplify(pts.slice(0,mi+1),tol).slice(0,-1),..._simplify(pts.slice(mi),tol)];return[pts[0],pts[pts.length-1]];}
 
-// ─── SRTM segment validation + land bypass ───────────────────────────────────
-
-// Sample interior points along segment at ~1 per 50m; return first land point or null.
-async function _checkSegment(la1, lo1, la2, lo2) {
-  const segLenKm = Math.hypot((la2 - la1) * 111, (lo2 - lo1) * 111 * Math.cos(la1 * Math.PI / 180));
-  const n = Math.max(15, Math.min(200, Math.ceil(segLenKm * 1000 / 50)));
-  const samples = Array.from({ length: n }, (_, k) => {
-    const t = (k + 1) / (n + 1);
-    return { lat: +(la1 + t * (la2 - la1)).toFixed(5), lon: +(lo1 + t * (lo2 - lo1)).toFixed(5), t };
-  });
-  const land = await _srtmIsLand(samples);
-  const first = samples.find((_, j) => land[j]);
-  return first ?? null;
+// Douglas-Peucker that refuses to collapse a chord crossing land.
+// Falls back to keeping the most-deviant waypoint and recursing, so the
+// output is guaranteed land-free (A* cells are water; we only remove them
+// when the shortcut chord is also entirely water).
+function _simplifyWaterAware(pts, tol = 0.002) {
+  if (pts.length <= 2) return pts;
+  let mx = 0, mi = 1;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const d = _perp(pts[i], pts[0], pts[pts.length - 1]);
+    if (d > mx) { mx = d; mi = i; }
+  }
+  if (mx > tol || _checkSegment(pts[0][0], pts[0][1], pts[pts.length - 1][0], pts[pts.length - 1][1])) {
+    return [
+      ..._simplifyWaterAware(pts.slice(0, mi + 1), tol).slice(0, -1),
+      ..._simplifyWaterAware(pts.slice(mi), tol),
+    ];
+  }
+  return [pts[0], pts[pts.length - 1]];
 }
 
-// Given a land point on segment [P1→P2], try perpendicular and diagonal offsets to find water.
-async function _bypass(landLat, landLon, la1, lo1, la2, lo2) {
-  const dx = lo2 - lo1, dy = la2 - la1;
-  const len = Math.hypot(dx, dy) || 1;
-  // perpendicular unit vectors (both sides)
-  const perpLat = -dx / len, perpLon = dy / len;
-  // along-segment unit vector
-  const fwdLat = dy / len, fwdLon = dx / len;
+// ─── Polygon-based segment validation + land bypass ──────────────────────────
+// All checks use the offline NE10m ocean polygon — no API calls, deterministic.
 
-  for (const scale of [0.015, 0.03, 0.055, 0.09, 0.14, 0.2, 0.28]) {
-    const cands = [
-      // perpendicular offsets (left/right)
-      { lat: +(landLat + perpLat * scale).toFixed(5), lon: +(landLon + perpLon * scale).toFixed(5) },
-      { lat: +(landLat - perpLat * scale).toFixed(5), lon: +(landLon - perpLon * scale).toFixed(5) },
-      // diagonal (forward-left, forward-right, back-left, back-right)
-      { lat: +(landLat + perpLat * scale + fwdLat * scale).toFixed(5), lon: +(landLon + perpLon * scale + fwdLon * scale).toFixed(5) },
-      { lat: +(landLat - perpLat * scale + fwdLat * scale).toFixed(5), lon: +(landLon - perpLon * scale + fwdLon * scale).toFixed(5) },
-      { lat: +(landLat + perpLat * scale - fwdLat * scale).toFixed(5), lon: +(landLon + perpLon * scale - fwdLon * scale).toFixed(5) },
-      { lat: +(landLat - perpLat * scale - fwdLat * scale).toFixed(5), lon: +(landLon - perpLon * scale - fwdLon * scale).toFixed(5) },
-    ];
-    const land = await _srtmIsLand(cands);
-    const w = cands.find((_, j) => !land[j]);
-    if (w) return [w.lat, w.lon];
+// Sample points along [P1→P2] at ~50 m intervals; return first land point or null.
+function _checkSegment(la1, lo1, la2, lo2) {
+  const segLenKm = Math.hypot((la2 - la1) * 111, (lo2 - lo1) * 111 * Math.cos(la1 * Math.PI / 180));
+  const n = Math.max(20, Math.min(400, Math.ceil(segLenKm * 1000 / 50)));
+  for (let k = 1; k <= n; k++) {
+    const t = k / (n + 1);
+    const lat = la1 + t * (la2 - la1);
+    const lon = lo1 + t * (lo2 - lo1);
+    if (!_isWater(lat, lon)) return { lat, lon, t };
   }
   return null;
 }
 
-// Walk every segment; insert a bypass waypoint for any that cross land.
-// Iterates up to maxPasses to handle routes with multiple crossings.
-async function _fixLandCrossings(waypoints, maxPasses = 6) {
+// Try perpendicular and diagonal offsets from a land point to find a water waypoint.
+function _bypass(landLat, landLon, la1, lo1, la2, lo2) {
+  const dx = lo2 - lo1, dy = la2 - la1;
+  const len = Math.hypot(dx, dy) || 1;
+  const perpLat = -dx / len, perpLon = dy / len;
+  const fwdLat  =  dy / len, fwdLon  = dx / len;
+
+  for (const scale of [0.015, 0.03, 0.055, 0.09, 0.14, 0.2, 0.28, 0.4, 0.55]) {
+    const cands = [
+      [landLat + perpLat * scale,                         landLon + perpLon * scale],
+      [landLat - perpLat * scale,                         landLon - perpLon * scale],
+      [landLat + perpLat * scale + fwdLat * scale * 0.5,  landLon + perpLon * scale + fwdLon * scale * 0.5],
+      [landLat - perpLat * scale + fwdLat * scale * 0.5,  landLon - perpLon * scale + fwdLon * scale * 0.5],
+      [landLat + perpLat * scale - fwdLat * scale * 0.5,  landLon + perpLon * scale - fwdLon * scale * 0.5],
+      [landLat - perpLat * scale - fwdLat * scale * 0.5,  landLon - perpLon * scale - fwdLon * scale * 0.5],
+    ];
+    for (const [lat, lon] of cands) {
+      if (_isWater(lat, lon)) return [+lat.toFixed(5), +lon.toFixed(5)];
+    }
+  }
+  return null;
+}
+
+// Walk every segment; insert bypass waypoints for land crossings.
+// Synchronous — no API calls needed. Up to maxPasses to handle chains of crossings.
+function _fixLandCrossings(waypoints, maxPasses = 12) {
   for (let pass = 0; pass < maxPasses; pass++) {
     let changed = false;
     const out = [waypoints[0]];
@@ -203,13 +194,13 @@ async function _fixLandCrossings(waypoints, maxPasses = 6) {
     for (let i = 0; i < waypoints.length - 1; i++) {
       const [la1, lo1] = waypoints[i];
       const [la2, lo2] = waypoints[i + 1];
-      const cross = await _checkSegment(la1, lo1, la2, lo2);
+      const cross = _checkSegment(la1, lo1, la2, lo2);
       if (!cross) { out.push([la2, lo2]); continue; }
 
-      console.log(`Segment ${i} crosses land at ${cross.lat},${cross.lon} — finding bypass`);
-      const bpt = await _bypass(cross.lat, cross.lon, la1, lo1, la2, lo2);
+      console.log(`  land crossing at ${cross.lat.toFixed(4)},${cross.lon.toFixed(4)} — bypassing`);
+      const bpt = _bypass(cross.lat, cross.lon, la1, lo1, la2, lo2);
       if (bpt) { out.push(bpt, [la2, lo2]); changed = true; }
-      else      { out.push([la2, lo2]); } // no bypass, keep original
+      else      { out.push([la2, lo2]); }
     }
 
     waypoints = out;
@@ -317,17 +308,15 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
     return [[fromLat, fromLon], [toLat, toLon]];
   }
 
-  let waypoints = path.map(k => k.split(',').map(Number));
-  waypoints[0] = [fromLat, fromLon];
-  waypoints[waypoints.length - 1] = [toLat, toLon];
-  waypoints = _simplify(waypoints);
+  // Simplify on pure A* cells (all water) — never attach exact endpoints first,
+  // as a land-side exact coord causes the simplifier to over-split.
+  let waypoints = _simplifyWaterAware(path.map(k => k.split(',').map(Number)));
 
-  // ── SRTM 30m validation: fix any segments that still cross land ──────────
-  console.log(`Validating ${waypoints.length - 1} segments with SRTM 30m…`);
-  waypoints = await _fixLandCrossings(waypoints);
-  // Re-apply exact endpoints after fix
-  waypoints[0] = [fromLat, fromLon];
-  waypoints[waypoints.length - 1] = [toLat, toLon];
+  // Only replace endpoints with exact coords when they're actually in water.
+  // If the exact point is on land (e.g. marina building misclassified by polygon,
+  // or geocoded coords are inland), keep the nearest A* water cell instead.
+  if (_isWater(fromLat, fromLon)) waypoints[0] = [fromLat, fromLon];
+  if (_isWater(toLat, toLon))     waypoints[waypoints.length - 1] = [toLat, toLon];
 
   console.log(`Final route: ${waypoints.length} waypoints`);
   return waypoints;
