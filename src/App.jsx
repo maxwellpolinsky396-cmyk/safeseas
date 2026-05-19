@@ -96,8 +96,8 @@ function StatusPill({ status, size = 'sm' }) {
 function Card({ children, style }) {
   return (
     <div style={{
-      background: '#13202E',
-      border: '1px solid #1E2F42',
+      background: 'var(--c-surface)',
+      border: '1px solid var(--c-border)',
       borderRadius: 18,
       padding: 18,
       ...style,
@@ -108,18 +108,18 @@ function Card({ children, style }) {
 function ConditionTile({ icon, label, value, unit, sub, accent }) {
   return (
     <div style={{ flex: 1, minWidth: 0, padding: '14px 14px 16px',
-      background: '#0F1A26', borderRadius: 14, border: '1px solid #1B2C40',
+      background: 'var(--c-surface-alt)', borderRadius: 14, border: '1px solid var(--c-border-soft)',
       display: 'flex', flexDirection: 'column', gap: 10,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#7E94AE' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--c-text-3)' }}>
         <Icon name={icon} size={14} sw={2}/>
         <span style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>{label}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-        <span style={{ fontSize: 26, fontWeight: 700, color: '#F1F5F9', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>{value}</span>
-        <span style={{ fontSize: 12, color: '#7E94AE', fontWeight: 600 }}>{unit}</span>
+        <span style={{ fontSize: 26, fontWeight: 700, color: 'var(--c-text)', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.02em' }}>{value}</span>
+        <span style={{ fontSize: 12, color: 'var(--c-text-3)', fontWeight: 600 }}>{unit}</span>
       </div>
-      {sub && <div style={{ fontSize: 11, color: '#7E94AE', fontVariantNumeric: 'tabular-nums' }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontVariantNumeric: 'tabular-nums' }}>{sub}</div>}
     </div>
   );
 }
@@ -127,7 +127,7 @@ function ConditionTile({ icon, label, value, unit, sub, accent }) {
 // ─────────────────────────────────────────────────────────────
 // Boat artwork
 // ─────────────────────────────────────────────────────────────
-function BoatArt({ type, color = '#F1F5F9', size = 80 }) {
+function BoatArt({ type, color = 'var(--c-text)', size = 80 }) {
   const p = { fill: 'none', stroke: color, strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' };
   const f = { fill: color, opacity: 0.08 };
   const arts = {
@@ -445,13 +445,13 @@ function LiveMap({ route, accent, routingActive }) {
           position: 'absolute', bottom: 228, right: 14, zIndex: 1000,
           width: 44, height: 44, borderRadius: 12,
           background: tracking ? '#4F9FFF' : 'rgba(10,20,32,0.9)',
-          border: `1.5px solid ${tracking ? '#4F9FFF' : '#1E2F42'}`,
+          border: `1.5px solid ${tracking ? '#4F9FFF' : 'var(--c-border)'}`,
           display: 'grid', placeItems: 'center', cursor: 'pointer',
           boxShadow: tracking ? '0 0 0 4px rgba(79,159,255,0.25),0 4px 14px rgba(0,0,0,0.5)' : '0 4px 14px rgba(0,0,0,0.5)',
           backdropFilter: 'blur(10px)',
         }}
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={tracking ? 'white' : '#7E94AE'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={tracking ? 'white' : 'var(--c-text-3)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="3"/>
           <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
         </svg>
@@ -462,8 +462,8 @@ function LiveMap({ route, accent, routingActive }) {
         <button onClick={() => setFollow(f => !f)} style={{
           position: 'absolute', bottom: 280, right: 14, zIndex: 1000,
           padding: '5px 11px', borderRadius: 99, cursor: 'pointer',
-          background: 'rgba(10,20,32,0.9)', border: `1px solid ${follow ? '#4F9FFF' : '#1E2F42'}`,
-          color: follow ? '#4F9FFF' : '#7E94AE', fontSize: 11.5, fontWeight: 600,
+          background: 'rgba(10,20,32,0.9)', border: `1px solid ${follow ? '#4F9FFF' : 'var(--c-border)'}`,
+          color: follow ? '#4F9FFF' : 'var(--c-text-3)', fontSize: 11.5, fontWeight: 600,
           backdropFilter: 'blur(10px)',
         }}>
           {follow ? '● Following' : '○ Follow me'}
@@ -475,7 +475,7 @@ function LiveMap({ route, accent, routingActive }) {
         <div style={{
           position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 1000,
           padding: '5px 12px', borderRadius: 99,
-          background: 'rgba(10,20,32,0.92)', border: '1px solid #1E2F42',
+          background: 'rgba(10,20,32,0.92)', border: '1px solid var(--c-border)',
           backdropFilter: 'blur(10px)',
           display: 'flex', alignItems: 'center', gap: 7,
         }}>
@@ -489,12 +489,12 @@ function LiveMap({ route, accent, routingActive }) {
         <div style={{
           position: 'absolute', top: 56, right: 14, zIndex: 1000,
           padding: '5px 10px', borderRadius: 99,
-          background: 'rgba(10,20,32,0.9)', border: '1px solid #1E2F42',
+          background: 'rgba(10,20,32,0.9)', border: '1px solid var(--c-border)',
           backdropFilter: 'blur(10px)',
           display: 'flex', alignItems: 'center', gap: 6,
         }}>
           <div style={{ width: 6, height: 6, borderRadius: 99, background: '#4ADE80', boxShadow: '0 0 6px #4ADE80' }}/>
-          <span style={{ fontSize: 11.5, fontWeight: 600, color: '#F1F5F9' }}>{vesselList.length} vessels nearby</span>
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--c-text)' }}>{vesselList.length} vessels nearby</span>
         </div>
       )}
 
@@ -570,28 +570,28 @@ function MarineMap({ accent, route, routeProgress = 1 }) {
       </g>
       <g transform="translate(82 420)">
         <circle r="11" fill={accent} opacity="0.18"/>
-        <circle r="6" fill="#0A1420" stroke={accent} strokeWidth="2.5"/>
+        <circle r="6" fill="var(--c-bg)" stroke={accent} strokeWidth="2.5"/>
       </g>
-      <text x="96" y="424" fill="#F1F5F9" fontSize="11" fontWeight="600" fontFamily="ui-sans-serif">{from}</text>
-      <text x="96" y="438" fill="#7E94AE" fontSize="9.5" fontFamily="ui-monospace">{from}</text>
+      <text x="96" y="424" fill="var(--c-text)" fontSize="11" fontWeight="600" fontFamily="ui-sans-serif">{from}</text>
+      <text x="96" y="438" fill="var(--c-text-3)" fontSize="9.5" fontFamily="ui-monospace">{from}</text>
       <g transform="translate(180 260)">
         <circle r="13" fill={accent} opacity="0.18"/>
         <circle r="13" fill="none" stroke={accent} strokeWidth="1.5" opacity="0.5"/>
         <path d="M0 -16 L4 -8 L-4 -8 Z" fill={accent}/>
         <circle r="4" fill={accent}/>
       </g>
-      <text x="200" y="258" fill="#F1F5F9" fontSize="11" fontWeight="600" fontFamily="ui-sans-serif">{to}</text>
-      <text x="200" y="272" fill="#7E94AE" fontSize="9.5" fontFamily="ui-monospace">{to}</text>
+      <text x="200" y="258" fill="var(--c-text)" fontSize="11" fontWeight="600" fontFamily="ui-sans-serif">{to}</text>
+      <text x="200" y="272" fill="var(--c-text-3)" fontSize="9.5" fontFamily="ui-monospace">{to}</text>
       <g transform="translate(345 50)" opacity="0.55">
-        <circle r="18" fill="none" stroke="#2A4258" strokeWidth="0.8"/>
-        <path d="M0 -14 L3 0 L0 14 L-3 0 Z" fill="#5B7791"/>
-        <path d="M0 -14 L3 0 L0 0 Z" fill="#F1F5F9"/>
-        <text y="-22" textAnchor="middle" fontSize="9" fill="#5B7791" fontFamily="ui-monospace">N</text>
+        <circle r="18" fill="none" stroke="var(--c-text-5)" strokeWidth="0.8"/>
+        <path d="M0 -14 L3 0 L0 14 L-3 0 Z" fill="var(--c-text-4)"/>
+        <path d="M0 -14 L3 0 L0 0 Z" fill="var(--c-text)"/>
+        <text y="-22" textAnchor="middle" fontSize="9" fill="var(--c-text-4)" fontFamily="ui-monospace">N</text>
       </g>
-      <g transform="translate(24 558)" fontFamily="ui-monospace" fontSize="9" fill="#5B7791">
-        <line x1="0" y1="0" x2="60" y2="0" stroke="#5B7791" strokeWidth="1"/>
-        <line x1="0" y1="-4" x2="0" y2="4" stroke="#5B7791" strokeWidth="1"/>
-        <line x1="60" y1="-4" x2="60" y2="4" stroke="#5B7791" strokeWidth="1"/>
+      <g transform="translate(24 558)" fontFamily="ui-monospace" fontSize="9" fill="var(--c-text-4)">
+        <line x1="0" y1="0" x2="60" y2="0" stroke="var(--c-text-4)" strokeWidth="1"/>
+        <line x1="0" y1="-4" x2="0" y2="4" stroke="var(--c-text-4)" strokeWidth="1"/>
+        <line x1="60" y1="-4" x2="60" y2="4" stroke="var(--c-text-4)" strokeWidth="1"/>
         <text x="0" y="16">0</text>
         <text x="60" y="16">5 nm</text>
       </g>
@@ -618,11 +618,11 @@ function LoginScreen({ onLogin, accent }) {
 
   const inputStyle = {
     width: 'calc(100% - 32px)',
-    background: '#0F1A26',
-    border: '1px solid #1B2C40',
+    background: 'var(--c-surface-alt)',
+    border: '1px solid var(--c-border-soft)',
     borderRadius: 14,
     padding: '14px 16px',
-    color: '#F1F5F9',
+    color: 'var(--c-text)',
     fontSize: 16,
     outline: 'none',
     fontFamily: 'inherit',
@@ -639,8 +639,8 @@ function LoginScreen({ onLogin, accent }) {
       all: 'unset', cursor: (disabled || loading) ? 'not-allowed' : 'pointer',
       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
       height: 56, borderRadius: 14, marginTop: 4,
-      background: (disabled || loading) ? '#1A2D40' : accent,
-      color: (disabled || loading) ? '#7E94AE' : '#06151E',
+      background: (disabled || loading) ? 'var(--c-disabled)' : accent,
+      color: (disabled || loading) ? 'var(--c-text-3)' : '#06151E',
       fontWeight: 700, fontSize: 16, letterSpacing: '-0.01em',
       boxShadow: (disabled || loading) ? 'none' : `0 0 0 1px ${accent}, 0 8px 24px ${accent}33`,
       transition: 'all 0.15s',
@@ -652,7 +652,7 @@ function LoginScreen({ onLogin, accent }) {
   const BackBtn = ({ onClick }) => (
     <button onClick={onClick} style={{
       all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-      fontSize: 13, color: '#7E94AE', fontWeight: 600, marginBottom: 20,
+      fontSize: 13, color: 'var(--c-text-3)', fontWeight: 600, marginBottom: 20,
     }}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M19 12H5M11 6l-6 6 6 6"/>
@@ -729,8 +729,8 @@ function LoginScreen({ onLogin, accent }) {
       <div style={{ width: 64, height: 64, borderRadius: 20, background: `${accent}1A`, border: `1.5px solid ${accent}44`, display: 'grid', placeItems: 'center', margin: '0 auto 14px' }}>
         <Icon name="boat" size={32} color={accent} sw={1.6}/>
       </div>
-      <div style={{ fontSize: 26, color: '#F1F5F9', fontWeight: 800, letterSpacing: '-0.03em' }}>Safe Seas</div>
-      <div style={{ fontSize: 13, color: '#7E94AE', marginTop: 4, letterSpacing: '0.02em' }}>Your boating go/no-go companion</div>
+      <div style={{ fontSize: 26, color: 'var(--c-text)', fontWeight: 800, letterSpacing: '-0.03em' }}>Safe Seas</div>
+      <div style={{ fontSize: 13, color: 'var(--c-text-3)', marginTop: 4, letterSpacing: '0.02em' }}>Your boating go/no-go companion</div>
     </div>
   );
 
@@ -739,12 +739,12 @@ function LoginScreen({ onLogin, accent }) {
   // ──────────────────────────────────────────────────────────
   if (mode === 'fp-email') {
     return (
-      <div style={{ position: 'absolute', inset: 0, background: '#0A1420', display: 'flex', flexDirection: 'column', padding: '28px 24px', overflowY: 'auto' }}>
+      <div style={{ position: 'absolute', inset: 0, background: 'var(--c-bg)', display: 'flex', flexDirection: 'column', padding: '28px 24px', overflowY: 'auto' }}>
         <BackBtn onClick={resetFp}/>
         <Branding/>
         <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 18, color: '#F1F5F9', fontWeight: 700, marginBottom: 6 }}>Forgot your password?</div>
-          <div style={{ fontSize: 13.5, color: '#7E94AE', lineHeight: 1.6 }}>Enter your account email and we'll send a 6-digit verification code.</div>
+          <div style={{ fontSize: 18, color: 'var(--c-text)', fontWeight: 700, marginBottom: 6 }}>Forgot your password?</div>
+          <div style={{ fontSize: 13.5, color: 'var(--c-text-3)', lineHeight: 1.6 }}>Enter your account email and we'll send a 6-digit verification code.</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <input type="email" value={fpEmail} onChange={e => setFpEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendCode()} placeholder="Email address" autoComplete="email" style={inputStyle}/>
@@ -764,13 +764,13 @@ function LoginScreen({ onLogin, accent }) {
   if (mode === 'fp-code') {
     const digits = fpCode.split('').concat(Array(6).fill('')).slice(0, 6);
     return (
-      <div style={{ position: 'absolute', inset: 0, background: '#0A1420', display: 'flex', flexDirection: 'column', padding: '28px 24px', overflowY: 'auto' }}>
+      <div style={{ position: 'absolute', inset: 0, background: 'var(--c-bg)', display: 'flex', flexDirection: 'column', padding: '28px 24px', overflowY: 'auto' }}>
         <BackBtn onClick={() => { setMode('fp-email'); setError(''); setFpCode(''); }}/>
         <Branding/>
         <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 18, color: '#F1F5F9', fontWeight: 700, marginBottom: 6 }}>Check your email</div>
-          <div style={{ fontSize: 13.5, color: '#7E94AE', lineHeight: 1.6 }}>
-            We sent a 6-digit code to <span style={{ color: '#C5D2E0', fontWeight: 600 }}>{fpEmail}</span>. It expires in 15 minutes.
+          <div style={{ fontSize: 18, color: 'var(--c-text)', fontWeight: 700, marginBottom: 6 }}>Check your email</div>
+          <div style={{ fontSize: 13.5, color: 'var(--c-text-3)', lineHeight: 1.6 }}>
+            We sent a 6-digit code to <span style={{ color: 'var(--c-text-2)', fontWeight: 600 }}>{fpEmail}</span>. It expires in 15 minutes.
           </div>
         </div>
         {/* 6-digit OTP boxes */}
@@ -778,10 +778,10 @@ function LoginScreen({ onLogin, accent }) {
           {digits.map((d, i) => (
             <div key={i} style={{
               width: 44, height: 56, borderRadius: 12,
-              background: '#0F1A26',
-              border: `1.5px solid ${d ? accent : '#1B2C40'}`,
+              background: 'var(--c-surface-alt)',
+              border: `1.5px solid ${d ? accent : 'var(--c-border-soft)'}`,
               display: 'grid', placeItems: 'center',
-              fontSize: 24, fontWeight: 700, color: '#F1F5F9',
+              fontSize: 24, fontWeight: 700, color: 'var(--c-text)',
               fontVariantNumeric: 'tabular-nums',
               transition: 'border-color 0.15s',
               boxShadow: d ? `0 0 0 3px ${accent}22` : 'none',
@@ -808,7 +808,7 @@ function LoginScreen({ onLogin, accent }) {
           {loading ? 'Verifying…' : 'Verify Code'}
           {!loading && <Icon name="arrow" size={18} color="#06151E" sw={2.2}/>}
         </PrimaryBtn>
-        <button onClick={sendCode} style={{ all: 'unset', cursor: 'pointer', marginTop: 16, textAlign: 'center', fontSize: 13, color: '#5B7791' }}>
+        <button onClick={sendCode} style={{ all: 'unset', cursor: 'pointer', marginTop: 16, textAlign: 'center', fontSize: 13, color: 'var(--c-text-4)' }}>
           Didn't get it? <span style={{ color: accent, fontWeight: 600 }}>Resend code</span>
         </button>
       </div>
@@ -820,18 +820,18 @@ function LoginScreen({ onLogin, accent }) {
   // ──────────────────────────────────────────────────────────
   if (mode === 'fp-pass') {
     return (
-      <div style={{ position: 'absolute', inset: 0, background: '#0A1420', display: 'flex', flexDirection: 'column', padding: '28px 24px', overflowY: 'auto' }}>
+      <div style={{ position: 'absolute', inset: 0, background: 'var(--c-bg)', display: 'flex', flexDirection: 'column', padding: '28px 24px', overflowY: 'auto' }}>
         <BackBtn onClick={() => { setMode('fp-code'); setError(''); }}/>
         <Branding/>
         <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 18, color: '#F1F5F9', fontWeight: 700, marginBottom: 6 }}>Set a new password</div>
-          <div style={{ fontSize: 13.5, color: '#7E94AE', lineHeight: 1.6 }}>Choose a strong password for your account.</div>
+          <div style={{ fontSize: 18, color: 'var(--c-text)', fontWeight: 700, marginBottom: 6 }}>Set a new password</div>
+          <div style={{ fontSize: 13.5, color: 'var(--c-text-3)', lineHeight: 1.6 }}>Choose a strong password for your account.</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <input type="password" value={fpNewPass} onChange={e => { setFpNewPass(e.target.value); setError(''); }} onKeyDown={e => e.key === 'Enter' && resetPassword()} placeholder="New password" autoComplete="new-password" style={inputStyle}/>
           <input type="password" value={fpConfirm} onChange={e => { setFpConfirm(e.target.value); setError(''); }} onKeyDown={e => e.key === 'Enter' && resetPassword()} placeholder="Confirm new password" autoComplete="new-password" style={{
             ...inputStyle,
-            borderColor: fpConfirm && fpNewPass !== fpConfirm ? '#7A2530' : fpConfirm && fpNewPass === fpConfirm ? '#1F6B4D' : '#1B2C40',
+            borderColor: fpConfirm && fpNewPass !== fpConfirm ? '#7A2530' : fpConfirm && fpNewPass === fpConfirm ? '#1F6B4D' : 'var(--c-border-soft)',
           }}/>
           {fpConfirm && fpNewPass === fpConfirm && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#34E0A0' }}>
@@ -853,12 +853,12 @@ function LoginScreen({ onLogin, accent }) {
   // ──────────────────────────────────────────────────────────
   if (mode === 'fp-done') {
     return (
-      <div style={{ position: 'absolute', inset: 0, background: '#0A1420', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '28px 24px' }}>
+      <div style={{ position: 'absolute', inset: 0, background: 'var(--c-bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '28px 24px' }}>
         <div style={{ width: 64, height: 64, borderRadius: 20, background: '#0F3D2E', border: '1.5px solid #1F6B4D', display: 'grid', placeItems: 'center', marginBottom: 20 }}>
           <Icon name="check" size={30} color="#34E0A0" sw={2.2}/>
         </div>
-        <div style={{ fontSize: 22, color: '#F1F5F9', fontWeight: 700, marginBottom: 8, textAlign: 'center' }}>Password updated!</div>
-        <div style={{ fontSize: 13.5, color: '#7E94AE', lineHeight: 1.6, textAlign: 'center', marginBottom: 32 }}>
+        <div style={{ fontSize: 22, color: 'var(--c-text)', fontWeight: 700, marginBottom: 8, textAlign: 'center' }}>Password updated!</div>
+        <div style={{ fontSize: 13.5, color: 'var(--c-text-3)', lineHeight: 1.6, textAlign: 'center', marginBottom: 32 }}>
           Your password has been reset. You can now log in with your new password.
         </div>
         <button onClick={resetFp} style={{
@@ -880,7 +880,7 @@ function LoginScreen({ onLogin, accent }) {
   return (
     <div style={{
       position: 'absolute', inset: 0,
-      background: '#0A1420',
+      background: 'var(--c-bg)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       padding: '28px 24px',
       overflowY: 'auto',
@@ -888,15 +888,15 @@ function LoginScreen({ onLogin, accent }) {
       <Branding/>
 
       {/* Mode tabs */}
-      <div style={{ display: 'flex', gap: 4, background: '#0F1A26', borderRadius: 14, padding: 4, marginBottom: 24, width: '100%', border: '1px solid #1E2F42' }}>
+      <div style={{ display: 'flex', gap: 4, background: 'var(--c-surface-alt)', borderRadius: 14, padding: 4, marginBottom: 24, width: '100%', border: '1px solid var(--c-border)' }}>
         {['login', 'signup'].map(m => (
           <button key={m} onClick={() => { setMode(m); setError(''); }} style={{
             all: 'unset', cursor: 'pointer', flex: 1, textAlign: 'center',
             padding: '10px 0', borderRadius: 10,
-            background: mode === m ? '#1A2D40' : 'transparent',
-            color: mode === m ? '#F1F5F9' : '#7E94AE',
+            background: mode === m ? 'var(--c-disabled)' : 'transparent',
+            color: mode === m ? 'var(--c-text)' : 'var(--c-text-3)',
             fontSize: 14, fontWeight: 600, transition: 'all 0.15s',
-            border: mode === m ? '1px solid #1E2F42' : '1px solid transparent',
+            border: mode === m ? '1px solid var(--c-border)' : '1px solid transparent',
           }}>
             {m === 'login' ? 'Log In' : 'Sign Up'}
           </button>
@@ -925,7 +925,7 @@ function LoginScreen({ onLogin, accent }) {
       </div>
 
       {mode === 'login' && (
-        <p style={{ marginTop: 20, fontSize: 12.5, color: '#5B7791', textAlign: 'center', lineHeight: 1.5 }}>
+        <p style={{ marginTop: 20, fontSize: 12.5, color: 'var(--c-text-4)', textAlign: 'center', lineHeight: 1.5 }}>
           Don't have an account?{' '}
           <button onClick={() => { setMode('signup'); setError(''); }} style={{ all: 'unset', cursor: 'pointer', color: accent, fontWeight: 600 }}>Sign up</button>
         </p>
@@ -943,7 +943,7 @@ function DisclaimerScreen({ onAccept, accent }) {
   return (
     <div style={{
       position: 'absolute', inset: 0,
-      background: '#0A1420',
+      background: 'var(--c-bg)',
       display: 'flex', flexDirection: 'column',
       padding: '28px 24px 32px',
       overflowY: 'auto',
@@ -964,15 +964,15 @@ function DisclaimerScreen({ onAccept, accent }) {
         <div style={{ fontSize: 10.5, letterSpacing: '0.14em', color: '#F5B547', fontWeight: 700, textTransform: 'uppercase', marginBottom: 6 }}>
           Important Notice
         </div>
-        <div style={{ fontSize: 22, color: '#F1F5F9', fontWeight: 700, letterSpacing: '-0.02em' }}>
+        <div style={{ fontSize: 22, color: 'var(--c-text)', fontWeight: 700, letterSpacing: '-0.02em' }}>
           Before you set sail
         </div>
       </div>
 
       {/* Disclaimer card */}
       <div style={{
-        background: '#13202E',
-        border: '1px solid #1E2F42',
+        background: 'var(--c-surface)',
+        border: '1px solid var(--c-border)',
         borderRadius: 18,
         padding: '20px 18px',
         marginBottom: 20,
@@ -980,17 +980,17 @@ function DisclaimerScreen({ onAccept, accent }) {
       }}>
         <div style={{
           fontSize: 11, fontWeight: 700, letterSpacing: '0.1em',
-          textTransform: 'uppercase', color: '#7E94AE', marginBottom: 14,
+          textTransform: 'uppercase', color: 'var(--c-text-3)', marginBottom: 14,
         }}>
           Liability Disclaimer
         </div>
-        <div style={{ fontSize: 14.5, color: '#C5D2E0', lineHeight: 1.65 }}>
+        <div style={{ fontSize: 14.5, color: 'var(--c-text-2)', lineHeight: 1.65 }}>
           Safe Seas is not liable for any damages or collisions while using our software. You use Safe Seas at your own risk.
         </div>
         <div style={{
           marginTop: 18, paddingTop: 16,
-          borderTop: '1px solid #1E2F42',
-          fontSize: 13, color: '#7E94AE', lineHeight: 1.6,
+          borderTop: '1px solid var(--c-border)',
+          fontSize: 13, color: 'var(--c-text-3)', lineHeight: 1.6,
         }}>
           Safe Seas provides weather and marine condition data for informational purposes only. Always consult official maritime authorities, the U.S. Coast Guard, and your own judgment before departing. Conditions can change rapidly on the water.
         </div>
@@ -1007,8 +1007,8 @@ function DisclaimerScreen({ onAccept, accent }) {
       >
         <div style={{
           width: 22, height: 22, borderRadius: 7, flexShrink: 0, marginTop: 1,
-          background: checked ? accent : '#0F1A26',
-          border: `1.5px solid ${checked ? accent : '#2A4258'}`,
+          background: checked ? accent : 'var(--c-surface-alt)',
+          border: `1.5px solid ${checked ? accent : 'var(--c-text-5)'}`,
           display: 'grid', placeItems: 'center',
           transition: 'all 0.15s',
           boxShadow: checked ? `0 0 0 3px ${accent}22` : 'none',
@@ -1019,7 +1019,7 @@ function DisclaimerScreen({ onAccept, accent }) {
             </svg>
           )}
         </div>
-        <span style={{ fontSize: 13.5, color: '#C5D2E0', lineHeight: 1.5 }}>
+        <span style={{ fontSize: 13.5, color: 'var(--c-text-2)', lineHeight: 1.5 }}>
           I have read and understand the disclaimer. I accept all risks associated with using Safe Seas.
         </span>
       </button>
@@ -1033,9 +1033,9 @@ function DisclaimerScreen({ onAccept, accent }) {
           cursor: checked ? 'pointer' : 'not-allowed',
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
           height: 56, borderRadius: 14,
-          background: checked ? accent : '#13202E',
+          background: checked ? accent : 'var(--c-surface)',
           color: checked ? '#06151E' : '#3A5068',
-          border: `1.5px solid ${checked ? accent : '#1E2F42'}`,
+          border: `1.5px solid ${checked ? accent : 'var(--c-border)'}`,
           fontWeight: 700, fontSize: 16, letterSpacing: '-0.01em',
           boxShadow: checked ? `0 0 0 1px ${accent}, 0 8px 24px ${accent}33` : 'none',
           transition: 'all 0.2s',
@@ -1133,10 +1133,10 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
     <div style={{ padding: '8px 20px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: '#7E94AE', fontWeight: 600, textTransform: 'uppercase' }}>
+          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--c-text-3)', fontWeight: 600, textTransform: 'uppercase' }}>
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
           </div>
-          <div style={{ fontSize: 22, color: '#F1F5F9', fontWeight: 700, letterSpacing: '-0.02em', marginTop: 2 }}>
+          <div style={{ fontSize: 22, color: 'var(--c-text)', fontWeight: 700, letterSpacing: '-0.02em', marginTop: 2 }}>
             {greeting}, {firstName}
           </div>
         </div>
@@ -1154,11 +1154,11 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
       </div>
 
       <div>
-        <label style={{ fontSize: 12, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.04em' }}>CREATE ROUTE</label>
+        <label style={{ fontSize: 12, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.04em' }}>CREATE ROUTE</label>
         <div style={{ marginTop: 8, display: 'grid', gap: 10 }}>
           <div style={{ position: 'relative' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#13202E', borderRadius: 16, padding: '0 16px 0 16px', height: 60, border: `1px solid ${focus ? accent : '#1E2F42'}`, boxShadow: focus ? `0 0 0 4px ${accent}22` : 'none', transition: 'all 0.15s ease' }}>
-              <Icon name="search" size={20} color={focus ? accent : '#7E94AE'}/>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--c-surface)', borderRadius: 16, padding: '0 16px 0 16px', height: 60, border: `1px solid ${focus ? accent : 'var(--c-border)'}`, boxShadow: focus ? `0 0 0 4px ${accent}22` : 'none', transition: 'all 0.15s ease' }}>
+              <Icon name="search" size={20} color={focus ? accent : 'var(--c-text-3)'}/>
               <input
                 value={from}
                 onChange={e => { setFrom(e.target.value); fetchSuggestionsDebounced(e.target.value, 'from'); }}
@@ -1171,20 +1171,20 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
                   if (e.key === 'Enter') { e.preventDefault(); if (fromActiveIndex >= 0) selectFromSuggestion(fromActiveIndex); }
                 }}
                 placeholder="From"
-                style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: '#F1F5F9', fontSize: 17, fontWeight: 500, letterSpacing: '-0.01em', fontFamily: 'inherit' }} />
+                style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--c-text)', fontSize: 17, fontWeight: 500, letterSpacing: '-0.01em', fontFamily: 'inherit' }} />
             </div>
             {showFromSuggestions && fromSuggestions && fromSuggestions.length > 0 && (
-              <div style={{ position: 'absolute', left: 0, right: 0, top: 68, background: '#0B1620', border: '1px solid #1E2F42', borderRadius: 10, zIndex: 40, padding: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.6)' }}>
+              <div style={{ position: 'absolute', left: 0, right: 0, top: 68, background: '#0B1620', border: '1px solid var(--c-border)', borderRadius: 10, zIndex: 40, padding: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.6)' }}>
                 {fromSuggestions.map((s, i) => (
                   <div key={i} onMouseDown={() => selectFromSuggestion(i)} onMouseEnter={() => setFromActiveIndex(i)}
-                    style={{ padding: '8px 10px', cursor: 'pointer', color: fromActiveIndex === i ? '#06151E' : '#C5D2E0', background: fromActiveIndex === i ? '#C5D2E0' : 'transparent', fontSize: 13 }}>{s.display_name}</div>
+                    style={{ padding: '8px 10px', cursor: 'pointer', color: fromActiveIndex === i ? '#06151E' : 'var(--c-text-2)', background: fromActiveIndex === i ? 'var(--c-text-2)' : 'transparent', fontSize: 13 }}>{s.display_name}</div>
                 ))}
               </div>
             )}
           </div>
           <div style={{ position: 'relative' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#13202E', borderRadius: 16, padding: '0 16px 0 16px', height: 60, border: `1px solid ${focus ? accent : '#1E2F42'}`, boxShadow: focus ? `0 0 0 4px ${accent}22` : 'none', transition: 'all 0.15s ease' }}>
-              <Icon name="pin" size={20} color={focus ? accent : '#7E94AE'}/>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--c-surface)', borderRadius: 16, padding: '0 16px 0 16px', height: 60, border: `1px solid ${focus ? accent : 'var(--c-border)'}`, boxShadow: focus ? `0 0 0 4px ${accent}22` : 'none', transition: 'all 0.15s ease' }}>
+              <Icon name="pin" size={20} color={focus ? accent : 'var(--c-text-3)'}/>
               <input
                 value={to}
                 onChange={e => { setTo(e.target.value); fetchSuggestionsDebounced(e.target.value, 'to'); }}
@@ -1197,22 +1197,22 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
                   if (e.key === 'Enter') { e.preventDefault(); if (toActiveIndex >= 0) selectToSuggestion(toActiveIndex); }
                 }}
                 placeholder="To"
-                style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: '#F1F5F9', fontSize: 17, fontWeight: 500, letterSpacing: '-0.01em', fontFamily: 'inherit' }} />
+                style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--c-text)', fontSize: 17, fontWeight: 500, letterSpacing: '-0.01em', fontFamily: 'inherit' }} />
             </div>
             {showToSuggestions && toSuggestions && toSuggestions.length > 0 && (
-              <div style={{ position: 'absolute', left: 0, right: 0, top: 68, background: '#0B1620', border: '1px solid #1E2F42', borderRadius: 10, zIndex: 40, padding: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.6)' }}>
+              <div style={{ position: 'absolute', left: 0, right: 0, top: 68, background: '#0B1620', border: '1px solid var(--c-border)', borderRadius: 10, zIndex: 40, padding: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.6)' }}>
                 {toSuggestions.map((s, i) => (
                   <div key={i} onMouseDown={() => selectToSuggestion(i)} onMouseEnter={() => setToActiveIndex(i)}
-                    style={{ padding: '8px 10px', cursor: 'pointer', color: toActiveIndex === i ? '#06151E' : '#C5D2E0', background: toActiveIndex === i ? '#C5D2E0' : 'transparent', fontSize: 13 }}>{s.display_name}</div>
+                    style={{ padding: '8px 10px', cursor: 'pointer', color: toActiveIndex === i ? '#06151E' : 'var(--c-text-2)', background: toActiveIndex === i ? 'var(--c-text-2)' : 'transparent', fontSize: 13 }}>{s.display_name}</div>
                 ))}
               </div>
             )}
             <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 11, color: '#7E94AE', fontWeight: 600, marginBottom: 6 }}>Popular destinations</div>
+              <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, marginBottom: 6 }}>Popular destinations</div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {PRESET_LOCATIONS.filter(p => !to || p.display_name.toLowerCase().includes(to.toLowerCase())).map((p, i) => (
                   <button key={i} onClick={() => applyPreset(p)} style={{ all: 'unset', cursor: 'pointer' }}>
-                    <div style={{ padding: '8px 12px', borderRadius: 10, background: '#0F1A26', border: '1px solid #1E2F42', color: '#C5D2E0', fontSize: 13 }}>{p.display_name}</div>
+                    <div style={{ padding: '8px 12px', borderRadius: 10, background: 'var(--c-surface-alt)', border: '1px solid var(--c-border)', color: 'var(--c-text-2)', fontSize: 13 }}>{p.display_name}</div>
                   </button>
                 ))}
               </div>
@@ -1223,23 +1223,23 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
 
       <Card style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px' }}>
-          <div style={{ width: 64, height: 44, background: '#0F1A26', borderRadius: 8, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
-            <BoatArt type={boat && boat.type ? boat.type : 'Center console'} color="#F1F5F9" size={40}/>
+          <div style={{ width: 64, height: 44, background: 'var(--c-surface-alt)', borderRadius: 8, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+            <BoatArt type={boat && boat.type ? boat.type : 'Center console'} color="var(--c-text)" size={40}/>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 10.5, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Your boat</div>
+            <div style={{ fontSize: 10.5, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Your boat</div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 15, color: '#F1F5F9', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div style={{ fontSize: 15, color: 'var(--c-text)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {boat ? `${boat.year || ''} ${boat.name || ''}`.trim() : 'No boat added yet'}
                 </div>
-                <div style={{ fontSize: 12, color: '#7E94AE', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
+                <div style={{ fontSize: 12, color: 'var(--c-text-3)', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
                   {boat ? `${boat.length || ''} · ${boat.type || ''}` : 'Add one in the Boat tab'}
                 </div>
               </div>
               <div style={{ minWidth: 120, display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
                 <button onClick={() => onPickBoat && onPickBoat()} style={{ all: 'unset', cursor: 'pointer' }}>
-                  <div style={{ padding: '8px 12px', borderRadius: 10, background: '#0F1A26', border: '1px solid #1E2F42', color: accent, fontSize: 13, fontWeight: 700 }}>Manage boats</div>
+                  <div style={{ padding: '8px 12px', borderRadius: 10, background: 'var(--c-surface-alt)', border: '1px solid var(--c-border)', color: accent, fontSize: 13, fontWeight: 700 }}>Manage boats</div>
                 </button>
               </div>
             </div>
@@ -1249,13 +1249,13 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
 
       <div>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
-          <span style={{ fontSize: 13, color: '#F1F5F9', fontWeight: 600 }}>Right now at {from}</span>
-          <span style={{ fontSize: 11, color: '#7E94AE', fontVariantNumeric: 'tabular-nums' }}>updated 6 min ago</span>
+          <span style={{ fontSize: 13, color: 'var(--c-text)', fontWeight: 600 }}>Right now at {from}</span>
+          <span style={{ fontSize: 11, color: 'var(--c-text-3)', fontVariantNumeric: 'tabular-nums' }}>updated 6 min ago</span>
         </div>
         <Card style={{ padding: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
             <StatusPill status={currentStatus}/>
-            <span style={{ fontSize: 11, color: '#7E94AE', fontVariantNumeric: 'tabular-nums' }}>{from} → {to}</span>
+            <span style={{ fontSize: 11, color: 'var(--c-text-3)', fontVariantNumeric: 'tabular-nums' }}>{from} → {to}</span>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <ConditionTile icon="wind" label="Wind" value={routeSafety?.conditions?.wind != null ? routeSafety.conditions.wind : '—'} unit="kt" sub={routeSafety?.conditions?.gust != null ? `gusts ${routeSafety.conditions.gust}` : 'Forecast unavailable'} />
@@ -1276,9 +1276,9 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
       </button>
 
       <div>
-        <div style={{ fontSize: 13, color: '#F1F5F9', fontWeight: 600, marginBottom: 10 }}>Recent trips</div>
+        <div style={{ fontSize: 13, color: 'var(--c-text)', fontWeight: 600, marginBottom: 10 }}>Recent trips</div>
         {trips.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '24px 0', color: '#5B7791', fontSize: 13 }}>
+          <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--c-text-4)', fontSize: 13 }}>
             No saved trips yet. Plan a route and save it!
           </div>
         ) : (
@@ -1291,14 +1291,14 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
                 <button key={t.id || i} onClick={() => onTrip(t)} style={{ all: 'unset', cursor: 'pointer', display: 'block' }}>
                   <Card style={{ padding: '14px 16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: 99, background: '#0F1A26', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 99, background: 'var(--c-surface-alt)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
                         <Icon name="pin" size={16} color={(STATUS[status] && STATUS[status].fg) || '#34E0A0'} sw={2}/>
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 14, color: '#F1F5F9', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
-                        <div style={{ fontSize: 11.5, color: '#7E94AE', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>{sub}</div>
+                        <div style={{ fontSize: 14, color: 'var(--c-text)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
+                        <div style={{ fontSize: 11.5, color: 'var(--c-text-3)', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>{sub}</div>
                       </div>
-                      <Icon name="chevron" size={16} color="#5B7791" sw={2}/>
+                      <Icon name="chevron" size={16} color="var(--c-text-4)" sw={2}/>
                     </div>
                   </Card>
                 </button>
@@ -1385,21 +1385,21 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
       <div style={{ position: 'absolute', top: 12, left: 16, right: 16, zIndex: 500, display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px 8px 10px',
           background: 'rgba(15,26,38,0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
-          borderRadius: 99, border: '1px solid #1E2F42' }}>
+          borderRadius: 99, border: '1px solid var(--c-border)' }}>
           <div style={{ width: 8, height: 8, borderRadius: 99, border: `1.5px solid ${accent}`, background: '#06151E' }}/>
-          <span style={{ fontSize: 12, color: '#F1F5F9', fontWeight: 600 }}>{route?.from || 'Start'}</span>
-          <Icon name="arrow" size={12} color="#7E94AE" sw={2}/>
+          <span style={{ fontSize: 12, color: 'var(--c-text)', fontWeight: 600 }}>{route?.from || 'Start'}</span>
+          <Icon name="arrow" size={12} color="var(--c-text-3)" sw={2}/>
           <Icon name="pin" size={14} color={accent} sw={2}/>
-          <span style={{ fontSize: 12, color: '#F1F5F9', fontWeight: 600 }}>{route?.to || 'Destination'}</span>
+          <span style={{ fontSize: 12, color: 'var(--c-text)', fontWeight: 600 }}>{route?.to || 'Destination'}</span>
         </div>
       </div>
 
       <div style={{
         position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 500,
-        background: 'linear-gradient(180deg, rgba(11,26,38,0.96), #0A1420 30%)',
+        background: 'linear-gradient(180deg, rgba(11,26,38,0.96), var(--c-bg) 30%)',
         backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
         borderTopLeftRadius: 28, borderTopRightRadius: 28,
-        borderTop: '1px solid #1E2F42',
+        borderTop: '1px solid var(--c-border)',
         boxShadow: '0 -20px 60px rgba(0,0,0,0.5)',
         height: sheetH,
         transition: 'height 0.35s cubic-bezier(.4,1.4,.6,1)',
@@ -1409,7 +1409,7 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
         <button onClick={() => setSheetExpanded(!sheetExpanded)} style={{
           all: 'unset', cursor: 'pointer', padding: '10px 0 4px', display: 'flex', justifyContent: 'center',
         }}>
-          <div style={{ width: 40, height: 5, borderRadius: 99, background: '#2A4258' }}/>
+          <div style={{ width: 40, height: 5, borderRadius: 99, background: 'var(--c-text-5)' }}/>
         </button>
 
         <div style={{ padding: '8px 20px 20px', flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1429,44 +1429,44 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
               <span style={{ width: 8, height: 8, borderRadius: 99, background: v.fg, boxShadow: `0 0 12px ${v.fg}` }}/>
               <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', color: v.fg }}>{v.label} TODAY</span>
             </div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: '#F1F5F9', letterSpacing: '-0.02em', lineHeight: 1.15 }}>
+            <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--c-text)', letterSpacing: '-0.02em', lineHeight: 1.15 }}>
               {verdict === 'go' && 'Clear all day.'}
               {verdict === 'wait' && 'Hold till afternoon.'}
               {verdict === 'nogo' && 'Stay at the dock.'}
             </div>
-            <div style={{ fontSize: 14.5, color: '#C5D2E0', marginTop: 8, lineHeight: 1.4 }}>{copy.line}</div>
+            <div style={{ fontSize: 14.5, color: 'var(--c-text-2)', marginTop: 8, lineHeight: 1.4 }}>{copy.line}</div>
             {routeSafety && (
               <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 14, background: '#0E1D29', border: '1px solid #1C3246' }}>
-                <div style={{ fontSize: 11, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Safety details</div>
+                <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Safety details</div>
                 {safetyReasons.length ? (
                   <div style={{ display: 'grid', gap: 6 }}>
                     {safetyReasons.map((reason, index) => (
-                      <div key={index} style={{ fontSize: 12, color: '#C5D2E0', lineHeight: 1.4 }}>• {reason}</div>
+                      <div key={index} style={{ fontSize: 12, color: 'var(--c-text-2)', lineHeight: 1.4 }}>• {reason}</div>
                     ))}
                   </div>
                 ) : (
-                  <div style={{ fontSize: 12, color: '#C5D2E0' }}>No critical safety issues detected for this route.</div>
+                  <div style={{ fontSize: 12, color: 'var(--c-text-2)' }}>No critical safety issues detected for this route.</div>
                 )}
               </div>
             )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
-            background: '#13202E', border: '1px solid #1E2F42', borderRadius: 16 }}>
+            background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 16 }}>
             <div style={{ width: 44, height: 44, borderRadius: 12, background: `${accent}1F`, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
               <Icon name="clock" size={22} color={accent} sw={2}/>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Best window</div>
-              <div style={{ fontSize: 17, color: '#F1F5F9', fontWeight: 700, marginTop: 2, letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>{bestWindow}</div>
+              <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Best window</div>
+              <div style={{ fontSize: 17, color: 'var(--c-text)', fontWeight: 700, marginTop: 2, letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>{bestWindow}</div>
             </div>
           </div>
 
-          <div style={{ background: '#0F1A26', border: '1px solid #1E2F42', borderRadius: 18, padding: 16, display: 'grid', gap: 12 }}>
-            <div style={{ fontSize: 11, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Plan your trip</div>
+          <div style={{ background: 'var(--c-surface-alt)', border: '1px solid var(--c-border)', borderRadius: 18, padding: 16, display: 'grid', gap: 12 }}>
+            <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Plan your trip</div>
             <div style={{ display: 'grid', gap: 8 }}>
-              <input value={fromValue} onChange={e => setFromValue(e.target.value)} placeholder="From" style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: '1px solid #1E2F42', background: '#06121C', color: '#F1F5F9', fontSize: 15 }} />
-              <input value={toValue} onChange={e => setToValue(e.target.value)} placeholder="To" style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: '1px solid #1E2F42', background: '#06121C', color: '#F1F5F9', fontSize: 15 }} />
+              <input value={fromValue} onChange={e => setFromValue(e.target.value)} placeholder="From" style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: '1px solid var(--c-border)', background: 'var(--c-bg)', color: 'var(--c-text)', fontSize: 15 }} />
+              <input value={toValue} onChange={e => setToValue(e.target.value)} placeholder="To" style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: '1px solid var(--c-border)', background: 'var(--c-bg)', color: 'var(--c-text)', fontSize: 15 }} />
             </div>
             <button onClick={() => { setSaved(false); onPlan && onPlan({ from: fromValue, to: toValue }); }} style={{ all: 'unset', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '14px 18px', borderRadius: 15, background: accent, color: '#06151E', fontWeight: 700, fontSize: 15, textTransform: 'uppercase' }}>
               Plan route
@@ -1474,7 +1474,7 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
           </div>
 
           <div>
-            <div style={{ fontSize: 11, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
               Conditions along the route
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -1485,10 +1485,10 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
           </div>
 
           <div>
-            <div style={{ fontSize: 11, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
               Hourly wind · {(boat && boat.windLim) || 0} kt limit
             </div>
-            <div style={{ position: 'relative', background: '#0F1A26', borderRadius: 14, border: '1px solid #1B2C40', padding: '16px 12px 10px' }}>
+            <div style={{ position: 'relative', background: 'var(--c-surface-alt)', borderRadius: 14, border: '1px solid var(--c-border-soft)', padding: '16px 12px 10px' }}>
               <div style={{ position: 'absolute', left: 12, right: 12, top: 16 + (1 - (boat?.windLim || 20)/30) * 60, height: 1, background: `${STATUS.wait.fg}33`, borderTop: `1px dashed ${STATUS.wait.fg}66`, pointerEvents: 'none' }}/>
               <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: 60, gap: 4 }}>
                 {hourly.map((h, i) => {
@@ -1504,7 +1504,7 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
                 {hourly.map((h, i) => (
-                  <div key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, color: '#7E94AE', fontVariantNumeric: 'tabular-nums' }}>{h.t}</div>
+                  <div key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, color: 'var(--c-text-3)', fontVariantNumeric: 'tabular-nums' }}>{h.t}</div>
                 ))}
               </div>
             </div>
@@ -1568,25 +1568,25 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
   return (
     <div style={{ padding: '8px 20px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div style={{ marginTop: 6 }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: '#7E94AE', fontWeight: 600, textTransform: 'uppercase' }}>Profile</div>
-        <div style={{ fontSize: 26, color: '#F1F5F9', fontWeight: 700, letterSpacing: '-0.02em', marginTop: 2 }}>My Boats</div>
+        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--c-text-3)', fontWeight: 600, textTransform: 'uppercase' }}>Profile</div>
+        <div style={{ fontSize: 26, color: 'var(--c-text)', fontWeight: 700, letterSpacing: '-0.02em', marginTop: 2 }}>My Boats</div>
       </div>
 
       {/* Active boat card */}
       <Card style={{ padding: 18 }}>
         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-          <div style={{ width: 92, height: 64, background: '#0F1A26', borderRadius: 10, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+          <div style={{ width: 92, height: 64, background: 'var(--c-surface-alt)', borderRadius: 10, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
             <BoatArt type={(boat && boat.type) || 'Center console'} color={accent} size={56}/>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 11, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Currently selected</div>
-            <div style={{ fontSize: 17, color: '#F1F5F9', fontWeight: 700, marginTop: 4, letterSpacing: '-0.01em' }}>{boat ? `${boat.year || ''} ${boat.name || ''}`.trim() : 'No boat selected'}</div>
-            <div style={{ fontSize: 12.5, color: '#7E94AE', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>{boat ? `${boat.length || ''} · ${boat.type || ''}` : 'Add a boat below'}</div>
+            <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Currently selected</div>
+            <div style={{ fontSize: 17, color: 'var(--c-text)', fontWeight: 700, marginTop: 4, letterSpacing: '-0.01em' }}>{boat ? `${boat.year || ''} ${boat.name || ''}`.trim() : 'No boat selected'}</div>
+            <div style={{ fontSize: 12.5, color: 'var(--c-text-3)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>{boat ? `${boat.length || ''} · ${boat.type || ''}` : 'Add a boat below'}</div>
           </div>
         </div>
         {boat && (
-          <div style={{ marginTop: 14, padding: 14, background: '#0F1A26', borderRadius: 12, border: '1px solid #1B2C40' }}>
-            <div style={{ fontSize: 11.5, color: '#C5D2E0', lineHeight: 1.5 }}>
+          <div style={{ marginTop: 14, padding: 14, background: 'var(--c-surface-alt)', borderRadius: 12, border: '1px solid var(--c-border-soft)' }}>
+            <div style={{ fontSize: 11.5, color: 'var(--c-text-2)', lineHeight: 1.5 }}>
               Comfortable up to{' '}
               <span style={{ color: accent, fontWeight: 700 }}>{boat.waveLim || '—'} ft waves</span> and{' '}
               <span style={{ color: accent, fontWeight: 700 }}>{boat.windLim || '—'} kt winds</span>. SafeSeas uses these limits for go/no-go decisions.
@@ -1597,12 +1597,12 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
 
       {/* User's boats */}
       {boats.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '20px 0', color: '#5B7791', fontSize: 13 }}>
+        <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--c-text-4)', fontSize: 13 }}>
           You haven't added any boats yet.
         </div>
       ) : (
         <div>
-          <div style={{ fontSize: 13, color: '#F1F5F9', fontWeight: 600, marginBottom: 10 }}>Your boats</div>
+          <div style={{ fontSize: 13, color: 'var(--c-text)', fontWeight: 600, marginBottom: 10 }}>Your boats</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             {boats.map(b => {
               const active = boat && boat.id === b.id;
@@ -1610,33 +1610,33 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
                 <div key={b.id || b.name} style={{ position: 'relative' }}>
                   <button onClick={() => setBoat(b)} style={{
                     all: 'unset', cursor: 'pointer', display: 'block', width: '100%',
-                    background: active ? `${accent}14` : '#13202E',
-                    border: `1.5px solid ${active ? accent : '#1E2F42'}`,
+                    background: active ? `${accent}14` : 'var(--c-surface)',
+                    border: `1.5px solid ${active ? accent : 'var(--c-border)'}`,
                     borderRadius: 14, padding: '14px 12px 12px',
                     transition: 'all 0.18s ease',
                     boxShadow: active ? `0 0 0 4px ${accent}1A` : 'none',
                   }}>
                     <div style={{ height: 56, display: 'grid', placeItems: 'center' }}>
-                      <BoatArt type={b.type || 'Center console'} color={active ? accent : '#C5D2E0'} size={50}/>
+                      <BoatArt type={b.type || 'Center console'} color={active ? accent : 'var(--c-text-2)'} size={50}/>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
-                      <span style={{ fontSize: 12, color: '#F1F5F9', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>{b.name}</span>
+                      <span style={{ fontSize: 12, color: 'var(--c-text)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '80%' }}>{b.name}</span>
                       {active && (
                         <span style={{ width: 18, height: 18, borderRadius: 99, background: accent, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
                           <Icon name="check" size={11} color="#06151E" sw={3}/>
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: 10.5, color: '#7E94AE', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
+                    <div style={{ fontSize: 10.5, color: 'var(--c-text-3)', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
                       {b.waveLim || '—'} ft · {b.windLim || '—'} kt
                     </div>
                   </button>
                   {/* Delete button */}
                   <button onClick={() => deleteBoat(b.id)} style={{
                     all: 'unset', cursor: 'pointer', position: 'absolute', top: 8, right: 8,
-                    width: 22, height: 22, borderRadius: 99, background: '#0F1A26',
-                    border: '1px solid #1E2F42', display: 'grid', placeItems: 'center',
-                    color: '#5B7791',
+                    width: 22, height: 22, borderRadius: 99, background: 'var(--c-surface-alt)',
+                    border: '1px solid var(--c-border)', display: 'grid', placeItems: 'center',
+                    color: 'var(--c-text-4)',
                   }}>
                     <Icon name="trash" size={12} sw={1.8}/>
                   </button>
@@ -1653,15 +1653,15 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
           all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12,
           padding: '14px 16px', width: 'calc(100% - 32px)',
         }}>
-          <div style={{ width: 32, height: 32, borderRadius: 99, background: '#0F1A26', display: 'grid', placeItems: 'center' }}>
+          <div style={{ width: 32, height: 32, borderRadius: 99, background: 'var(--c-surface-alt)', display: 'grid', placeItems: 'center' }}>
             <Icon name="boat" size={16} color={accent} sw={2}/>
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 14, color: '#F1F5F9', fontWeight: 600 }}>Browse boat catalog</div>
-            <div style={{ fontSize: 11.5, color: '#7E94AE', marginTop: 2 }}>Add from preset boats</div>
+            <div style={{ fontSize: 14, color: 'var(--c-text)', fontWeight: 600 }}>Browse boat catalog</div>
+            <div style={{ fontSize: 11.5, color: 'var(--c-text-3)', marginTop: 2 }}>Add from preset boats</div>
           </div>
           <div style={{ transform: catalogOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>
-            <Icon name="chevron" size={16} color="#5B7791" sw={2}/>
+            <Icon name="chevron" size={16} color="var(--c-text-4)" sw={2}/>
           </div>
         </button>
         {catalogOpen && (
@@ -1672,21 +1672,21 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
                 <div key={p.id} style={{
                   display: 'flex', alignItems: 'center', gap: 12,
                   padding: '12px 10px', borderRadius: 12,
-                  background: '#0F1A26', border: '1px solid #1B2C40',
+                  background: 'var(--c-surface-alt)', border: '1px solid var(--c-border-soft)',
                 }}>
                   <div style={{ width: 44, height: 36, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
-                    <BoatArt type={p.type || 'Center console'} color="#7E94AE" size={32}/>
+                    <BoatArt type={p.type || 'Center console'} color="var(--c-text-3)" size={32}/>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, color: '#F1F5F9', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-                    <div style={{ fontSize: 11, color: '#7E94AE', marginTop: 2 }}>{p.type} · {p.length} · {p.waveLim} ft / {p.windLim} kt</div>
+                    <div style={{ fontSize: 13, color: 'var(--c-text)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--c-text-3)', marginTop: 2 }}>{p.type} · {p.length} · {p.waveLim} ft / {p.windLim} kt</div>
                   </div>
                   <button onClick={() => addFromPreset(p)} disabled={alreadyAdded} style={{
                     all: 'unset', cursor: alreadyAdded ? 'default' : 'pointer',
                     padding: '6px 12px', borderRadius: 8,
-                    background: alreadyAdded ? '#13202E' : `${accent}22`,
-                    border: `1px solid ${alreadyAdded ? '#1E2F42' : accent}`,
-                    color: alreadyAdded ? '#5B7791' : accent,
+                    background: alreadyAdded ? 'var(--c-surface)' : `${accent}22`,
+                    border: `1px solid ${alreadyAdded ? 'var(--c-border)' : accent}`,
+                    color: alreadyAdded ? 'var(--c-text-4)' : accent,
                     fontSize: 12, fontWeight: 600, flexShrink: 0,
                   }}>
                     {alreadyAdded ? 'Added' : '+ Add'}
@@ -1704,15 +1704,15 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
           all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12,
           padding: '14px 16px', width: 'calc(100% - 32px)',
         }}>
-          <div style={{ width: 32, height: 32, borderRadius: 99, background: '#0F1A26', display: 'grid', placeItems: 'center' }}>
+          <div style={{ width: 32, height: 32, borderRadius: 99, background: 'var(--c-surface-alt)', display: 'grid', placeItems: 'center' }}>
             <Icon name="plus" size={18} color={accent} sw={2.2}/>
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 14, color: '#F1F5F9', fontWeight: 600 }}>Add custom boat</div>
-            <div style={{ fontSize: 11.5, color: '#7E94AE', marginTop: 2 }}>Enter your own length, limits, and type</div>
+            <div style={{ fontSize: 14, color: 'var(--c-text)', fontWeight: 600 }}>Add custom boat</div>
+            <div style={{ fontSize: 11.5, color: 'var(--c-text-3)', marginTop: 2 }}>Enter your own length, limits, and type</div>
           </div>
           <div style={{ transform: customOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }}>
-            <Icon name="chevron" size={16} color="#5B7791" sw={2}/>
+            <Icon name="chevron" size={16} color="var(--c-text-4)" sw={2}/>
           </div>
         </button>
         {customOpen && (
@@ -1724,15 +1724,15 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
             <Field label="Wind limit (kt)" placeholder="22"                    value={custom.windLim || ''} onChange={v => setCustom({...custom, windLim: parseFloat(v) || 0})} numeric />
             <Field label="Description"    placeholder="Optional description"    value={custom.description || ''} onChange={v => setCustom({...custom, description: v})} />
             <div>
-              <div style={{ fontSize: 11, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Type</div>
+              <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Type</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {types.map(t => (
                   <button key={t} onClick={() => setCustom({...custom, type: t})} style={{
                     all: 'unset', cursor: 'pointer',
                     padding: '6px 11px', borderRadius: 99,
-                    background: custom.type === t ? `${accent}22` : '#0F1A26',
-                    border: `1px solid ${custom.type === t ? accent : '#1B2C40'}`,
-                    color: custom.type === t ? accent : '#C5D2E0',
+                    background: custom.type === t ? `${accent}22` : 'var(--c-surface-alt)',
+                    border: `1px solid ${custom.type === t ? accent : 'var(--c-border-soft)'}`,
+                    color: custom.type === t ? accent : 'var(--c-text-2)',
                     fontSize: 12, fontWeight: 600,
                   }}>{t}</button>
                 ))}
@@ -1745,7 +1745,7 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
                 setCustom({ name: '', length: '', type: '', waveLim: 0, windLim: 0, description: '', year: '' });
                 setCustomOpen(false);
               }} style={{ all: 'unset', cursor: 'pointer', padding: '10px 14px', background: accent, color: '#06151E', borderRadius: 10, fontWeight: 700 }}>Save boat</button>
-              <button onClick={() => setCustomOpen(false)} style={{ all: 'unset', cursor: 'pointer', padding: '10px 14px', background: '#0F1A26', color: '#C5D2E0', borderRadius: 10 }}>Cancel</button>
+              <button onClick={() => setCustomOpen(false)} style={{ all: 'unset', cursor: 'pointer', padding: '10px 14px', background: 'var(--c-surface-alt)', color: 'var(--c-text-2)', borderRadius: 10 }}>Cancel</button>
             </div>
           </div>
         )}
@@ -1758,7 +1758,7 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
 function Field({ label, value, onChange, placeholder, numeric }) {
   return (
     <label style={{ display: 'block' }}>
-      <div style={{ fontSize: 11, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
       <input
         value={value}
         onChange={e => onChange(e.target.value)}
@@ -1766,8 +1766,8 @@ function Field({ label, value, onChange, placeholder, numeric }) {
         inputMode={numeric ? 'numeric' : 'text'}
         style={{
           width: 'calc(100% - 28px)',
-          background: '#0F1A26', border: '1px solid #1B2C40', borderRadius: 10,
-          padding: '12px 14px', color: '#F1F5F9', fontSize: 15, outline: 'none',
+          background: 'var(--c-surface-alt)', border: '1px solid var(--c-border-soft)', borderRadius: 10,
+          padding: '12px 14px', color: 'var(--c-text)', fontSize: 15, outline: 'none',
           fontFamily: 'inherit', fontVariantNumeric: 'tabular-nums',
         }}/>
     </label>
@@ -1803,12 +1803,12 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
   return (
     <div style={{ padding: '8px 20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ marginTop: 6 }}>
-        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: '#7E94AE', fontWeight: 600, textTransform: 'uppercase' }}>Account</div>
-        <div style={{ fontSize: 26, color: '#F1F5F9', fontWeight: 700, letterSpacing: '-0.02em', marginTop: 2 }}>Settings</div>
+        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--c-text-3)', fontWeight: 600, textTransform: 'uppercase' }}>Account</div>
+        <div style={{ fontSize: 26, color: 'var(--c-text)', fontWeight: 700, letterSpacing: '-0.02em', marginTop: 2 }}>Settings</div>
       </div>
 
       {/* Profile card */}
-      <div style={{ background: '#13202E', border: '1px solid #1E2F42', borderRadius: 18, padding: 20 }}>
+      <div style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 18, padding: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
           <div style={{
             width: 56, height: 56, borderRadius: 20,
@@ -1818,18 +1818,18 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
             <span style={{ fontSize: 24, fontWeight: 800, color: '#06151E', lineHeight: 1 }}>{initial}</span>
           </div>
           <div>
-            <div style={{ fontSize: 17, color: '#F1F5F9', fontWeight: 700 }}>{user?.name || 'Captain'}</div>
-            <div style={{ fontSize: 12.5, color: '#5B7791', marginTop: 2 }}>{user?.email || ''}</div>
+            <div style={{ fontSize: 17, color: 'var(--c-text)', fontWeight: 700 }}>{user?.name || 'Captain'}</div>
+            <div style={{ fontSize: 12.5, color: 'var(--c-text-4)', marginTop: 2 }}>{user?.email || ''}</div>
           </div>
         </div>
 
-        <div style={{ fontSize: 11, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>Profile color</div>
+        <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>Profile color</div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {PROFILE_COLORS.map(c => (
             <button key={c} onClick={() => onProfileColorChange(c)} style={{
               all: 'unset', cursor: 'pointer',
               width: 32, height: 32, borderRadius: 99, background: c,
-              outline: profileColor === c ? `3px solid #F1F5F9` : '3px solid transparent',
+              outline: profileColor === c ? `3px solid var(--c-text)` : '3px solid transparent',
               outlineOffset: 2,
               boxShadow: profileColor === c ? `0 0 0 2px ${c}` : 'none',
               transition: 'all 0.15s',
@@ -1839,24 +1839,24 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
       </div>
 
       {/* Appearance */}
-      <div style={{ background: '#13202E', border: '1px solid #1E2F42', borderRadius: 18, padding: '14px 18px' }}>
-        <div style={{ fontSize: 11, color: '#7E94AE', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 14 }}>Appearance</div>
+      <div style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 18, padding: '14px 18px' }}>
+        <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 14 }}>Appearance</div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <div style={{ fontSize: 14, color: '#F1F5F9', fontWeight: 600 }}>Dark mode</div>
-            <div style={{ fontSize: 12, color: '#5B7791', marginTop: 2 }}>Use the dark marine theme</div>
+            <div style={{ fontSize: 14, color: 'var(--c-text)', fontWeight: 600 }}>Dark mode</div>
+            <div style={{ fontSize: 12, color: 'var(--c-text-4)', marginTop: 2 }}>Use the dark marine theme</div>
           </div>
           <button onClick={() => onColorModeChange(colorMode === 'dark' ? 'light' : 'dark')} style={{
             all: 'unset', cursor: 'pointer',
             width: 50, height: 28, borderRadius: 99,
-            background: colorMode === 'dark' ? accent : '#2A4258',
+            background: colorMode === 'dark' ? accent : 'var(--c-text-5)',
             position: 'relative', transition: 'background 0.2s',
             boxShadow: colorMode === 'dark' ? `0 0 0 1px ${accent}66` : 'none',
             flexShrink: 0,
           }}>
             <div style={{
               position: 'absolute', top: 3, left: colorMode === 'dark' ? 25 : 3,
-              width: 22, height: 22, borderRadius: 99, background: '#F1F5F9',
+              width: 22, height: 22, borderRadius: 99, background: 'white',
               transition: 'left 0.2s',
             }}/>
           </button>
@@ -1867,16 +1867,16 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
       <button onClick={onLogout} style={{
         all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14,
         padding: '16px 18px', borderRadius: 18,
-        background: '#13202E', border: '1px solid #1E2F42',
+        background: 'var(--c-surface)', border: '1px solid var(--c-border)',
       }}>
-        <div style={{ width: 36, height: 36, borderRadius: 12, background: '#0F1A26', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 12, background: 'var(--c-surface-alt)', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
           <Icon name="logout" size={18} color="#FF6B6B" sw={2}/>
         </div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 14, color: '#F1F5F9', fontWeight: 600 }}>Log Out</div>
-          <div style={{ fontSize: 12, color: '#5B7791', marginTop: 2 }}>{user?.email || ''}</div>
+          <div style={{ fontSize: 14, color: 'var(--c-text)', fontWeight: 600 }}>Log Out</div>
+          <div style={{ fontSize: 12, color: 'var(--c-text-4)', marginTop: 2 }}>{user?.email || ''}</div>
         </div>
-        <Icon name="chevron" size={16} color="#5B7791" sw={2}/>
+        <Icon name="chevron" size={16} color="var(--c-text-4)" sw={2}/>
       </button>
 
       {/* Delete account */}
@@ -1884,21 +1884,21 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
         <button onClick={() => setDeleteMode(true)} style={{
           all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14,
           padding: '16px 18px', borderRadius: 18,
-          background: '#13202E', border: '1px solid #1E2F42',
+          background: 'var(--c-surface)', border: '1px solid var(--c-border)',
         }}>
           <div style={{ width: 36, height: 36, borderRadius: 12, background: '#1A0A0A', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
             <Icon name="trash" size={18} color="#FF6B6B" sw={2}/>
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 14, color: '#FF6B6B', fontWeight: 600 }}>Delete Account</div>
-            <div style={{ fontSize: 12, color: '#5B7791', marginTop: 2 }}>Permanently remove your data</div>
+            <div style={{ fontSize: 12, color: 'var(--c-text-4)', marginTop: 2 }}>Permanently remove your data</div>
           </div>
-          <Icon name="chevron" size={16} color="#5B7791" sw={2}/>
+          <Icon name="chevron" size={16} color="var(--c-text-4)" sw={2}/>
         </button>
       ) : (
         <div style={{ background: '#3F1418', border: '1px solid #7A2530', borderRadius: 18, padding: 20 }}>
           <div style={{ fontSize: 14, color: '#FF6B6B', fontWeight: 700, marginBottom: 6 }}>Delete your account?</div>
-          <div style={{ fontSize: 13, color: '#C5D2E0', marginBottom: 16, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 13, color: 'var(--c-text-2)', marginBottom: 16, lineHeight: 1.5 }}>
             This permanently deletes your account, boats, and trip history. This cannot be undone.
           </div>
           <input
@@ -1908,9 +1908,9 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
             onKeyDown={e => e.key === 'Enter' && handleDelete()}
             placeholder="Enter your password to confirm"
             style={{
-              width: 'calc(100% - 32px)', background: '#06121C',
+              width: 'calc(100% - 32px)', background: 'var(--c-bg)',
               border: '1px solid #7A2530', borderRadius: 10,
-              padding: '12px 16px', color: '#F1F5F9', fontSize: 15,
+              padding: '12px 16px', color: 'var(--c-text)', fontSize: 15,
               outline: 'none', fontFamily: 'inherit', marginBottom: 12,
             }}
           />
@@ -1923,8 +1923,8 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
             <button onClick={() => { setDeleteMode(false); setDeletePassword(''); setDeleteError(''); }} style={{
               all: 'unset', cursor: 'pointer', flex: 1, textAlign: 'center',
               padding: '12px 0', borderRadius: 10,
-              background: '#13202E', border: '1px solid #1E2F42',
-              color: '#C5D2E0', fontSize: 14, fontWeight: 600,
+              background: 'var(--c-surface)', border: '1px solid var(--c-border)',
+              color: 'var(--c-text-2)', fontSize: 14, fontWeight: 600,
             }}>
               Cancel
             </button>
@@ -1954,14 +1954,14 @@ function TabBar({ tab, setTab, accent }) {
     <div style={{
       position: 'absolute', left: 0, right: 0, bottom: 0,
       paddingBottom: 28, paddingTop: 6,
-      background: 'linear-gradient(180deg, rgba(10,20,32,0) 0%, #0A1420 30%)',
+      background: 'linear-gradient(180deg, rgba(10,20,32,0) 0%, var(--c-bg) 30%)',
       zIndex: 600,
     }}>
       <div style={{
         margin: '0 16px', height: 60, borderRadius: 22,
         background: 'rgba(19, 32, 46, 0.92)',
         backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
-        border: '1px solid #1E2F42',
+        border: '1px solid var(--c-border)',
         display: 'flex', alignItems: 'stretch',
       }}>
         {tabs.map(t => {
@@ -1970,7 +1970,7 @@ function TabBar({ tab, setTab, accent }) {
             <button key={t.id} onClick={() => setTab(t.id)} style={{
               all: 'unset', cursor: 'pointer', flex: 1,
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              gap: 3, color: on ? accent : '#7E94AE',
+              gap: 3, color: on ? accent : 'var(--c-text-3)',
             }}>
               <Icon name={t.icon} size={22} sw={on ? 2.2 : 1.8}/>
               <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.02em' }}>{t.label}</span>
@@ -1999,6 +1999,11 @@ function App() {
   // ── Settings state ──
   const [colorMode, setColorMode] = useState(() => localStorage.getItem('safeseas_color_mode') || 'dark');
   const [profileColor, setProfileColor] = useState(() => localStorage.getItem('safeseas_profile_color') || '#22E3D0');
+
+  // Apply/remove .light class on <html> so CSS variables resolve correctly.
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', colorMode === 'light');
+  }, [colorMode]);
 
   // ── App state ──
   const [tab, setTab] = useState('home');
@@ -2247,20 +2252,20 @@ function App() {
     return (
       <div style={{
         minHeight: '100vh', width: '100%',
-        background: '#06121C',
+        background: 'var(--c-bg)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontFamily: '"Inter", -apple-system, "SF Pro Text", system-ui, sans-serif',
       }}>
-        <IOSDevice statusBar={<IOSStatusBar dark={true} time="9:14"/>}>
+        <IOSDevice statusBar={<IOSStatusBar dark={colorMode === 'dark'} time="9:14"/>}>
           <div style={{
-            position: 'absolute', inset: 0, background: '#0A1420',
+            position: 'absolute', inset: 0, background: 'var(--c-bg)',
             display: 'grid', placeItems: 'center',
           }}>
             <div style={{ textAlign: 'center' }}>
               <div style={{ width: 48, height: 48, borderRadius: 16, background: `${t.accent}1A`, border: `1.5px solid ${t.accent}44`, display: 'grid', placeItems: 'center', margin: '0 auto 12px' }}>
                 <Icon name="boat" size={24} color={t.accent}/>
               </div>
-              <div style={{ fontSize: 13, color: '#5B7791' }}>Loading…</div>
+              <div style={{ fontSize: 13, color: 'var(--c-text-4)' }}>Loading…</div>
             </div>
           </div>
         </IOSDevice>
@@ -2271,15 +2276,15 @@ function App() {
   return (
     <div style={{
       minHeight: '100vh', width: '100%',
-      background: '#06121C',
+      background: 'var(--c-bg)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: '24px 12px',
       fontFamily: '"Inter", -apple-system, "SF Pro Text", system-ui, sans-serif',
     }}>
-      <IOSDevice statusBar={<IOSStatusBar dark={true} time="9:14"/>}>
+      <IOSDevice statusBar={<IOSStatusBar dark={colorMode === 'dark'} time="9:14"/>}>
         <div data-screen-label={`SafeSeas — ${user ? tab : 'login'}`} style={{
           position: 'absolute', inset: 0,
-          background: '#0A1420', color: '#F1F5F9',
+          background: 'var(--c-bg)', color: 'var(--c-text)',
           overflow: 'hidden',
         }}>
           {!user ? (
