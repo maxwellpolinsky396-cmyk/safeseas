@@ -1992,13 +1992,25 @@ function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('safeseas_token'));
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [disclaimerAccepted, setDisclaimerAccepted] = useState(
-    () => localStorage.getItem('safeseas_disclaimer_accepted') === '1'
-  );
+  const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
 
   // ── Settings state ──
   const [colorMode, setColorMode] = useState(() => localStorage.getItem('safeseas_color_mode') || 'dark');
-  const [profileColor, setProfileColor] = useState(() => localStorage.getItem('safeseas_profile_color') || '#22E3D0');
+  const [profileColor, setProfileColor] = useState('#22E3D0');
+
+  const AVATAR_COLORS = ['#22E3D0', '#38BDF8', '#A78BFA', '#F472B6', '#34D399', '#FB923C', '#F5B547', '#2DD4BF'];
+
+  function applyUserPrefs(u) {
+    setDisclaimerAccepted(localStorage.getItem(`safeseas_disclaimer_${u.id}`) === '1');
+    const stored = localStorage.getItem(`safeseas_profile_color_${u.id}`);
+    if (stored) {
+      setProfileColor(stored);
+    } else {
+      const color = AVATAR_COLORS[u.id % AVATAR_COLORS.length];
+      setProfileColor(color);
+      localStorage.setItem(`safeseas_profile_color_${u.id}`, color);
+    }
+  }
 
   // Apply/remove .light class on <html> so CSS variables resolve correctly.
   useEffect(() => {
@@ -2027,6 +2039,7 @@ function App() {
       .then(data => {
         if (data?.user) {
           setUser(data.user);
+          applyUserPrefs(data.user);
         } else {
           localStorage.removeItem('safeseas_token');
           setAuthToken(null);
@@ -2069,10 +2082,11 @@ function App() {
   const handleLogin = (token, loggedInUser) => {
     setAuthToken(token);
     setUser(loggedInUser);
+    applyUserPrefs(loggedInUser);
   };
 
   const handleDisclaimerAccept = () => {
-    localStorage.setItem('safeseas_disclaimer_accepted', '1');
+    if (user) localStorage.setItem(`safeseas_disclaimer_${user.id}`, '1');
     setDisclaimerAccepted(true);
   };
 
@@ -2083,6 +2097,8 @@ function App() {
     localStorage.removeItem('safeseas_token');
     setAuthToken(null);
     setUser(null);
+    setDisclaimerAccepted(false);
+    setProfileColor('#22E3D0');
     setBoat(null);
     setBoats([]);
     setTrips([]);
@@ -2097,7 +2113,7 @@ function App() {
 
   const handleProfileColorChange = (color) => {
     setProfileColor(color);
-    localStorage.setItem('safeseas_profile_color', color);
+    if (user) localStorage.setItem(`safeseas_profile_color_${user.id}`, color);
   };
 
   async function deleteAccount(password) {
@@ -2110,8 +2126,11 @@ function App() {
       const data = await res.json();
       throw new Error(data.error || 'Failed to delete account');
     }
+    if (user) {
+      localStorage.removeItem(`safeseas_disclaimer_${user.id}`);
+      localStorage.removeItem(`safeseas_profile_color_${user.id}`);
+    }
     localStorage.removeItem('safeseas_token');
-    localStorage.removeItem('safeseas_disclaimer_accepted');
     setAuthToken(null);
     setUser(null);
     setBoat(null);
