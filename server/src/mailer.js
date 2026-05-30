@@ -62,4 +62,37 @@ async function sendResetCode(email, code) {
   }
 }
 
-module.exports = { sendResetCode };
+async function sendFeedback(fromUser, message) {
+  const client = getClient();
+  const DEST = 'noreplysafeseas@gmail.com';
+
+  if (!client) {
+    console.log('\n' + '─'.repeat(52));
+    console.log('  Safe Seas — Feedback (dev mode)');
+    console.log('─'.repeat(52));
+    console.log(`  From    : ${fromUser}`);
+    console.log(`  Message : ${message}`);
+    console.log('─'.repeat(52) + '\n');
+    return;
+  }
+
+  const from = process.env.RESEND_FROM || 'Safe Seas <onboarding@resend.dev>';
+  const { error } = await client.emails.send({
+    from,
+    to: DEST,
+    subject: `Safe Seas feedback from ${fromUser}`,
+    text: `From: ${fromUser}\n\n${message}`,
+    html: `
+      <div style="font-family:-apple-system,system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#0A1420;color:#F1F5F9;border-radius:16px;">
+        <p style="font-size:13px;color:#7E94AE;margin:0 0 24px;letter-spacing:0.1em;text-transform:uppercase;">Safe Seas · User Feedback</p>
+        <h1 style="font-size:20px;margin:0 0 6px;color:#F1F5F9;">New feedback</h1>
+        <p style="color:#7E94AE;font-size:13px;margin:0 0 20px;">From: <strong style="color:#C5D2E0;">${fromUser}</strong></p>
+        <div style="background:#13202E;border:1px solid #1E2F42;border-radius:12px;padding:18px 20px;white-space:pre-wrap;font-size:14px;line-height:1.6;color:#F1F5F9;">${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+      </div>
+    `,
+  });
+
+  if (error) console.warn('Feedback email error:', error.message);
+}
+
+module.exports = { sendResetCode, sendFeedback };

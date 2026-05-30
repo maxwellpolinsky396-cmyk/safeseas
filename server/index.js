@@ -255,6 +255,19 @@ app.get('/api/geocode', async (req, res) => {
   }
 });
 
+app.post('/api/feedback', requireAuth, async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message || !message.trim()) return res.status(400).json({ error: 'Message is required' });
+    const from = `${req.user.name} <${req.user.email}>`;
+    await mailer.sendFeedback(from, message.trim());
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('feedback error', err);
+    res.status(500).json({ error: 'Failed to send feedback' });
+  }
+});
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 4000;

@@ -1785,6 +1785,27 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
   const [deleteError, setDeleteError] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackState, setFeedbackState] = useState('idle'); // 'idle' | 'sending' | 'sent' | 'error'
+
+  const submitFeedback = async () => {
+    if (!feedbackText.trim()) return;
+    setFeedbackState('sending');
+    try {
+      const token = localStorage.getItem('safeseas_token');
+      const res = await fetch(`${API}/api/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ message: feedbackText.trim() }),
+      });
+      if (!res.ok) throw new Error();
+      setFeedbackState('sent');
+      setFeedbackText('');
+    } catch {
+      setFeedbackState('error');
+    }
+  };
+
   const initial = user?.name ? user.name[0].toUpperCase() : '?';
 
   const handleDelete = async () => {
@@ -1859,6 +1880,49 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
               width: 22, height: 22, borderRadius: 99, background: 'white',
               transition: 'left 0.2s',
             }}/>
+          </button>
+        </div>
+      </div>
+
+      {/* Feedback */}
+      <div style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 18, padding: '16px 18px' }}>
+        <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>Send Feedback</div>
+        <div style={{ fontSize: 13, color: 'var(--c-text-4)', marginBottom: 12, lineHeight: 1.5 }}>
+          Have a suggestion or found a bug? We'd love to hear from you.
+        </div>
+        <textarea
+          value={feedbackText}
+          onChange={e => { setFeedbackText(e.target.value); if (feedbackState !== 'idle') setFeedbackState('idle'); }}
+          placeholder="Type your feedback here…"
+          rows={4}
+          style={{
+            width: '100%', boxSizing: 'border-box',
+            background: 'var(--c-surface-alt)', border: `1px solid ${feedbackState === 'error' ? '#FF6B6B' : 'var(--c-border)'}`,
+            borderRadius: 12, padding: '11px 13px',
+            color: 'var(--c-text)', fontSize: 14, lineHeight: 1.55,
+            resize: 'none', outline: 'none', fontFamily: 'inherit',
+          }}
+        />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+          {feedbackState === 'sent' && (
+            <span style={{ fontSize: 13, color: '#34E0A0', fontWeight: 600 }}>Feedback sent — thanks!</span>
+          )}
+          {feedbackState === 'error' && (
+            <span style={{ fontSize: 13, color: '#FF6B6B', fontWeight: 600 }}>Failed to send. Try again.</span>
+          )}
+          {(feedbackState === 'idle' || feedbackState === 'sending') && <span/>}
+          <button
+            onClick={submitFeedback}
+            disabled={feedbackState === 'sending' || !feedbackText.trim()}
+            style={{
+              all: 'unset', cursor: feedbackText.trim() && feedbackState !== 'sending' ? 'pointer' : 'default',
+              padding: '9px 18px', borderRadius: 10,
+              background: feedbackText.trim() && feedbackState !== 'sending' ? accent : 'var(--c-disabled)',
+              color: feedbackText.trim() && feedbackState !== 'sending' ? '#06151E' : 'var(--c-text-4)',
+              fontSize: 13, fontWeight: 700, transition: 'background 0.15s, color 0.15s',
+            }}
+          >
+            {feedbackState === 'sending' ? 'Sending…' : 'Send'}
           </button>
         </div>
       </div>
