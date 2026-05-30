@@ -48,4 +48,28 @@ async function geocode(query, limit = 5) {
   return results;
 }
 
-module.exports = { geocode };
+async function reverseGeocode(lat, lon) {
+  const cacheKey = `rev|${lat.toFixed(5)}|${lon.toFixed(5)}`;
+  const cached = _cache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) return cached.results;
+
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=16`;
+  const res = await _throttledFetch(url);
+  if (!res.ok) return null;
+  const d = await res.json();
+  if (d.error) return null;
+
+  const addr = d.address || {};
+  const specific = d.name || addr.tourism || addr.leisure || addr.amenity || addr.marina || addr.pier;
+  const locality = addr.hamlet || addr.suburb || addr.neighbourhood || addr.village || addr.town || addr.city;
+  const parts = [];
+  if (specific) parts.push(specific);
+  else if (locality) parts.push(locality);
+  if (addr.state && !parts.includes(addr.state)) parts.push(addr.state);
+  const name = parts.length ? parts.join(', ') : (d.display_name || '').split(',').slice(0, 2).join(',').trim() || null;
+
+  _cache.set(cacheKey, { results: name, expires: Date.now() + CACHE_TTL });
+  return name;
+}
+
+module.exports = { geocode, reverseGeocode };

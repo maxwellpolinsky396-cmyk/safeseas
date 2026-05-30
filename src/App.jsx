@@ -251,7 +251,7 @@ const MAP_STYLE = {
   terrain: { source: 'terrarium', exaggeration: 1.5 },
 };
 
-function LiveMap({ route, accent, routingActive }) {
+function LiveMap({ route, accent, routingActive, onPinSet }) {
   const mapRef = useRef(null);
   const [userPos, setUserPos] = useState(null);
   const [tracking, setTracking] = useState(false);
@@ -260,8 +260,24 @@ function LiveMap({ route, accent, routingActive }) {
   const [gpsError, setGpsError] = useState(null);
   const [aisConnected, setAisConnected] = useState(false);
   const [selectedVessel, setSelectedVessel] = useState(null);
+  const [mapClick, setMapClick] = useState(null); // { lat, lon, x, y }
+  const [pinBusy, setPinBusy] = useState(false);
   const watchRef = useRef(null);
   const wsRef = useRef(null);
+
+  const handlePinChoice = async (type) => {
+    if (!mapClick || !onPinSet) return;
+    const { lat, lon } = mapClick;
+    setMapClick(null);
+    setPinBusy(true);
+    let name = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(4)}°${lon >= 0 ? 'E' : 'W'}`;
+    try {
+      const res = await fetch(`${API}/api/reverse-geocode?lat=${lat}&lon=${lon}`);
+      if (res.ok) { const d = await res.json(); if (d.name) name = d.name; }
+    } catch {}
+    setPinBusy(false);
+    onPinSet(type, lat, lon, name);
+  };
 
   const DEFAULT_LNG = -82.7196;
   const DEFAULT_LAT = 27.4976;
@@ -371,6 +387,10 @@ function LiveMap({ route, accent, routingActive }) {
         initialViewState={{ longitude: initLng, latitude: initLat, zoom: 12, pitch: 60, bearing: 0 }}
         style={{ width: '100%', height: '100%' }}
         attributionControl={false}
+        onClick={onPinSet ? (e) => {
+          setSelectedVessel(null);
+          setMapClick({ lat: e.lngLat.lat, lon: e.lngLat.lng, x: e.point.x, y: e.point.y });
+        } : undefined}
       >
         {/* Route line — glow + dashed overlay */}
         {routeCoords && (
@@ -406,7 +426,7 @@ function LiveMap({ route, accent, routingActive }) {
         {/* AIS vessel markers */}
         {vesselList.map(v => (
           <Marker key={v.mmsi} longitude={v.lng} latitude={v.lat} anchor="center"
-            onClick={() => setSelectedVessel(sel => sel?.mmsi === v.mmsi ? null : v)}
+            onClick={e => { e.originalEvent.stopPropagation(); setSelectedVessel(sel => sel?.mmsi === v.mmsi ? null : v); }}
           >
             <svg width="14" height="18" viewBox="0 0 14 18"
               style={{ transform: `rotate(${v.cog || 0}deg)`, display: 'block', filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.6))', cursor: 'pointer' }}
@@ -436,7 +456,78 @@ function LiveMap({ route, accent, routingActive }) {
             <div style={{ width: 16, height: 16, background: '#4F9FFF', border: '3px solid white', borderRadius: '50%', boxShadow: '0 0 0 5px rgba(79,159,255,0.28),0 2px 6px rgba(0,0,0,0.5)' }}/>
           </Marker>
         )}
+
+        {/* Custom pin drop crosshair */}
+        {mapClick && (
+          <Marker longitude={mapClick.lon} latitude={mapClick.lat} anchor="center">
+            <svg width="28" height="28" viewBox="0 0 28 28" style={{ display: 'block', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.7))' }}>
+              <circle cx="14" cy="14" r="5" fill="white" fillOpacity="0.95"/>
+              <circle cx="14" cy="14" r="5" fill="none" stroke={accent} strokeWidth="2.5"/>
+              <line x1="14" y1="1" x2="14" y2="8" stroke={accent} strokeWidth="2" strokeLinecap="round"/>
+              <line x1="14" y1="20" x2="14" y2="27" stroke={accent} strokeWidth="2" strokeLinecap="round"/>
+              <line x1="1" y1="14" x2="8" y2="14" stroke={accent} strokeWidth="2" strokeLinecap="round"/>
+              <line x1="20" y1="14" x2="27" y2="14" stroke={accent} strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+          </Marker>
+        )}
       </Map>
+
+      {/* Map pin context menu */}
+      {mapClick && (
+        <div style={{
+          position: 'absolute',
+          left: `clamp(8px, ${mapClick.x - 88}px, calc(100% - 184px))`,
+          top: mapClick.y > 150 ? mapClick.y - 118 : mapClick.y + 18,
+          zIndex: 2000,
+          background: 'rgba(10,20,32,0.97)', border: '1px solid var(--c-border)',
+          borderRadius: 14, padding: 6, backdropFilter: 'blur(14px)',
+          display: 'flex', flexDirection: 'column', gap: 3,
+          boxShadow: '0 8px 28px rgba(0,0,0,0.65)',
+          minWidth: 172,
+        }}>
+          {[
+            { type: 'from', label: 'Set as Departure', icon: '⊙' },
+            { type: 'to',   label: 'Set as Arrival',   icon: '⊕' },
+          ].map(({ type, label, icon }) => (
+            <button key={type} onClick={() => handlePinChoice(type)} style={{
+              all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10,
+              padding: '9px 12px', borderRadius: 10,
+              color: 'var(--c-text)', fontSize: 13.5, fontWeight: 600,
+              transition: 'background 0.12s',
+            }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--c-surface-alt)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              <span style={{ fontSize: 16, color: accent, lineHeight: 1 }}>{icon}</span>
+              {label}
+            </button>
+          ))}
+          <div style={{ height: 1, background: 'var(--c-border)', margin: '2px 4px' }}/>
+          <button onClick={() => setMapClick(null)} style={{
+            all: 'unset', cursor: 'pointer', padding: '7px 12px', borderRadius: 10,
+            color: 'var(--c-text-4)', fontSize: 12.5, fontWeight: 600,
+            transition: 'background 0.12s',
+          }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--c-surface-alt)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Pin resolving indicator */}
+      {pinBusy && (
+        <div style={{
+          position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 2000,
+          padding: '5px 14px', borderRadius: 99,
+          background: 'rgba(10,20,32,0.92)', border: '1px solid var(--c-border)',
+          backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', gap: 7,
+        }}>
+          <div style={{ width: 7, height: 7, borderRadius: 99, background: accent, animation: 'pulse 1.2s infinite' }}/>
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--c-text-2)' }}>Setting pin…</span>
+        </div>
+      )}
 
       {/* GPS tracking button */}
       <button
@@ -1314,7 +1405,7 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
 // ─────────────────────────────────────────────────────────────
 // TRIP DETAIL SCREEN
 // ─────────────────────────────────────────────────────────────
-function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, currentTrip, routeSafety, routingActive }) {
+function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, currentTrip, routeSafety, routingActive, onPinSet }) {
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const [routeProgress, setRouteProgress] = useState(0);
   const [saved, setSaved] = useState(false);
@@ -1377,7 +1468,7 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
 
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-      <LiveMap accent={accent} route={route} routingActive={routingActive}/>
+      <LiveMap accent={accent} route={route} routingActive={routingActive} onPinSet={onPinSet}/>
 
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 100, zIndex: 500,
         background: 'linear-gradient(180deg, rgba(6,21,32,0.7), transparent)', pointerEvents: 'none' }}/>
@@ -2388,6 +2479,13 @@ function App() {
                     routingActive={routingActive}
                     onSave={saveTrip}
                     onPlan={planRoute}
+                    onPinSet={(type, lat, lon, name) => {
+                      const r = route;
+                      const updated = type === 'from'
+                        ? { from: name, fromLat: lat, fromLon: lon, to: r.to, toLat: r.toLat, toLon: r.toLon }
+                        : { from: r.from, fromLat: r.fromLat, fromLon: r.fromLon, to: name, toLat: lat, toLon: lon };
+                      planRoute({ ...updated, waypoints: null, fromSnapped: null, toSnapped: null });
+                    }}
                   />
                 </div>
               ) : (

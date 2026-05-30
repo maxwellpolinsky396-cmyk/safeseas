@@ -255,6 +255,19 @@ app.get('/api/geocode', async (req, res) => {
   }
 });
 
+app.get('/api/reverse-geocode', async (req, res) => {
+  try {
+    const lat = parseFloat(req.query.lat);
+    const lon = parseFloat(req.query.lon);
+    if (isNaN(lat) || isNaN(lon)) return res.status(400).json({ error: 'lat and lon required' });
+    const name = await geocode.reverseGeocode(lat, lon);
+    res.json({ name });
+  } catch (err) {
+    console.error('reverse-geocode error', err);
+    res.status(500).json({ error: 'reverse geocode failed' });
+  }
+});
+
 app.post('/api/feedback', requireAuth, async (req, res) => {
   try {
     const { message } = req.body;
