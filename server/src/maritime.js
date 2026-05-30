@@ -19,30 +19,45 @@ function _isWater(lat, lon) {
   return booleanPointInPolygon(turfPoint([lon, lat]), _loadOcean());
 }
 
-// ─── Nominatim marina snap ────────────────────────────────────────────────────
+// ─── Overpass marina/dock snap ────────────────────────────────────────────────
 
-async function _snapToMarina(lat, lon) {
-  const d = 0.18;
-  const vb = `${lon - d},${lat - d},${lon + d},${lat + d}`;
-  const hdr = { 'User-Agent': 'SafeSeas/1.0', Accept: 'application/json' };
-  const base = 'https://nominatim.openstreetmap.org/search';
-  const [a, b] = await Promise.allSettled([
-    _fetch(`${base}?q=marina&format=json&limit=8&viewbox=${vb}&bounded=1`,  { headers: hdr, signal: AbortSignal.timeout(8000) }).then(r => r.ok ? r.json() : []),
-    _fetch(`${base}?q=harbour&format=json&limit=8&viewbox=${vb}&bounded=1`, { headers: hdr, signal: AbortSignal.timeout(8000) }).then(r => r.ok ? r.json() : []),
-  ]);
-  const results = [
-    ...(a.status === 'fulfilled' ? a.value : []),
-    ...(b.status === 'fulfilled' ? b.value : []),
-  ];
-  if (!results.length) return null;
-  let best = null, bestDist = Infinity;
-  for (const r of results) {
-    const rlat = parseFloat(r.lat), rlon = parseFloat(r.lon);
-    if (isNaN(rlat) || isNaN(rlon)) continue;
-    const dist = Math.hypot(rlat - lat, rlon - lon);
-    if (dist < bestDist) { bestDist = dist; best = { lat: rlat, lon: rlon, name: r.display_name?.split(',')[0] || null }; }
+async function _snapToMarina(lat, lon, radiusM = 25000) {
+  const query = `[out:json][timeout:12];(` +
+    `node["leisure"="marina"](around:${radiusM},${lat},${lon});` +
+    `way["leisure"="marina"](around:${radiusM},${lat},${lon});` +
+    `node["amenity"="harbour"](around:${radiusM},${lat},${lon});` +
+    `way["amenity"="harbour"](around:${radiusM},${lat},${lon});` +
+    `node["waterway"="dock"](around:${radiusM},${lat},${lon});` +
+    `way["waterway"="dock"](around:${radiusM},${lat},${lon});` +
+    `node["man_made"="pier"](around:${radiusM},${lat},${lon});` +
+  `);out center;`;
+  try {
+    const res = await _fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      body: `data=${encodeURIComponent(query)}`,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'SafeSeas/1.0' },
+      signal: AbortSignal.timeout(14000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const elements = data.elements || [];
+    if (!elements.length) return null;
+    let best = null, bestDist = Infinity;
+    for (const el of elements) {
+      const elat = el.lat ?? el.center?.lat;
+      const elon = el.lon ?? el.center?.lon;
+      if (elat == null || elon == null) continue;
+      const dist = Math.hypot(elat - lat, elon - lon);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = { lat: elat, lon: elon, name: el.tags?.name || el.tags?.['name:en'] || null };
+      }
+    }
+    return best;
+  } catch (err) {
+    console.warn('_snapToMarina Overpass error:', err.message);
+    return null;
   }
-  return best;
 }
 
 // ─── OpenTopoData helpers ─────────────────────────────────────────────────────
