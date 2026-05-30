@@ -251,19 +251,55 @@ const MAP_STYLE = {
   terrain: { source: 'terrarium', exaggeration: 1.5 },
 };
 
+// ── Navigation helpers ────────────────────────────────────────────────────────
+function _haversineNm(lat1, lon1, lat2, lon2) {
+  const R = 3440.065;
+  const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180, Δλ = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function _routeRemainingNm(waypoints, uLat, uLon) {
+  if (!waypoints || waypoints.length < 2) return null;
+  let minD = Infinity, mi = 0;
+  waypoints.forEach(([wLat, wLon], i) => { const d = _haversineNm(uLat, uLon, wLat, wLon); if (d < minD) { minD = d; mi = i; } });
+  let total = _haversineNm(uLat, uLon, waypoints[mi][0], waypoints[mi][1]);
+  for (let i = mi; i < waypoints.length - 1; i++) total += _haversineNm(waypoints[i][0], waypoints[i][1], waypoints[i+1][0], waypoints[i+1][1]);
+  return total;
+}
+
+function _etaStr(distNm, speedKts) {
+  if (!speedKts || speedKts < 0.5) return null;
+  const arrival = new Date(Date.now() + (distNm / speedKts) * 3600000);
+  return arrival.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function _compassDir(deg) {
+  return ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'][Math.round(((deg%360)+360)%360/22.5)%16];
+}
+
+function _navZoom(kts) {
+  if (kts < 2) return 15; if (kts < 6) return 13.5; if (kts < 12) return 12.5; return 11.5;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function LiveMap({ route, accent, routingActive, onPinSet }) {
   const mapRef = useRef(null);
-  const [userPos, setUserPos] = useState(null);
+  const [userPos, setUserPos] = useState(null); // { lat, lng, acc, heading, speedKts }
   const [tracking, setTracking] = useState(false);
   const [follow, setFollow] = useState(false);
+  const [navMode, setNavMode] = useState(false);
+  const [arrived, setArrived] = useState(false);
   const [vessels, setVessels] = useState({});
   const [gpsError, setGpsError] = useState(null);
   const [aisConnected, setAisConnected] = useState(false);
   const [selectedVessel, setSelectedVessel] = useState(null);
-  const [mapClick, setMapClick] = useState(null); // { lat, lon, x, y }
+  const [mapClick, setMapClick] = useState(null);
   const [pinBusy, setPinBusy] = useState(false);
   const watchRef = useRef(null);
   const wsRef = useRef(null);
+  const headingHistory = useRef([]);
 
   const handlePinChoice = async (type) => {
     if (!mapClick || !onPinSet) return;
@@ -296,19 +332,59 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
     mapRef.current.flyTo({ center: [depCoords[1], depCoords[0]], duration: 1200 });
   }, [depCoords?.[0], depCoords?.[1]]);
 
-  // Follow GPS position
+  // Camera: navigation mode (heading-up, lower-third) or plain follow
   useEffect(() => {
-    if (!follow || !userPos || !mapRef.current) return;
-    mapRef.current.flyTo({ center: [userPos.lng, userPos.lat], duration: 800 });
-  }, [follow, Math.round((userPos?.lat ?? 0) * 1000), Math.round((userPos?.lng ?? 0) * 1000)]);
+    if (!userPos || !mapRef.current) return;
+    if (navMode) {
+      mapRef.current.easeTo({
+        center: [userPos.lng, userPos.lat],
+        bearing: userPos.heading ?? 0,
+        pitch: 65,
+        zoom: _navZoom(userPos.speedKts ?? 0),
+        duration: 600,
+        padding: { top: 60, bottom: 270, left: 20, right: 20 },
+      });
+    } else if (follow) {
+      mapRef.current.flyTo({ center: [userPos.lng, userPos.lat], duration: 800 });
+    }
+  }, [
+    navMode, follow,
+    Math.round((userPos?.lat ?? 0) * 10000),
+    Math.round((userPos?.lng ?? 0) * 10000),
+    Math.round((userPos?.heading ?? 0) * 5),
+    Math.round((userPos?.speedKts ?? 0) * 5),
+  ]);
+
+  // Reset nav state when route changes
+  useEffect(() => { setNavMode(false); setArrived(false); }, [route?.to]);
+
+  // Arrival detection
+  useEffect(() => {
+    if (!navMode || !userPos || !arrCoords) return;
+    if (_haversineNm(userPos.lat, userPos.lng, arrCoords[0], arrCoords[1]) < 0.054) setArrived(true);
+  }, [navMode, Math.round((userPos?.lat ?? 0) * 10000), Math.round((userPos?.lng ?? 0) * 10000)]);
 
   const startGPS = () => {
     if (!navigator.geolocation) { setGpsError('GPS not supported by this browser'); return; }
     setGpsError(null);
+    headingHistory.current = [];
     watchRef.current = navigator.geolocation.watchPosition(
-      pos => setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy }),
+      pos => {
+        const raw = pos.coords.heading;
+        let heading = null;
+        if (raw != null && !isNaN(raw)) {
+          headingHistory.current.push(raw);
+          if (headingHistory.current.length > 6) headingHistory.current.shift();
+          const rads = headingHistory.current.map(a => a * Math.PI / 180);
+          const sx = rads.reduce((s, a) => s + Math.cos(a), 0);
+          const sy = rads.reduce((s, a) => s + Math.sin(a), 0);
+          heading = (Math.atan2(sy, sx) * 180 / Math.PI + 360) % 360;
+        }
+        const speedKts = pos.coords.speed != null ? pos.coords.speed * 1.944 : null;
+        setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, heading, speedKts });
+      },
       () => setGpsError('Location access denied — check browser permissions'),
-      { enableHighAccuracy: true, maximumAge: 3000, timeout: 12000 }
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 12000 }
     );
     setTracking(true);
     setFollow(true);
@@ -316,10 +392,13 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
 
   const stopGPS = () => {
     if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current);
+    watchRef.current = null;
+    headingHistory.current = [];
     setTracking(false);
     setFollow(false);
+    setNavMode(false);
+    setArrived(false);
     setUserPos(null);
-    watchRef.current = null;
   };
 
   const aisCenter = userPos
@@ -453,7 +532,14 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
         {/* GPS position */}
         {userPos && (
           <Marker longitude={userPos.lng} latitude={userPos.lat} anchor="center">
-            <div style={{ width: 16, height: 16, background: '#4F9FFF', border: '3px solid white', borderRadius: '50%', boxShadow: '0 0 0 5px rgba(79,159,255,0.28),0 2px 6px rgba(0,0,0,0.5)' }}/>
+            {navMode && userPos.heading != null ? (
+              <svg width="26" height="26" viewBox="0 0 26 26"
+                style={{ display: 'block', transform: `rotate(${userPos.heading}deg)`, filter: 'drop-shadow(0 2px 5px rgba(0,0,0,0.7))' }}>
+                <polygon points="13,2 21,24 13,19 5,24" fill="#4F9FFF" stroke="white" strokeWidth="1.8" strokeLinejoin="round"/>
+              </svg>
+            ) : (
+              <div style={{ width: 16, height: 16, background: '#4F9FFF', border: '3px solid white', borderRadius: '50%', boxShadow: '0 0 0 5px rgba(79,159,255,0.28),0 2px 6px rgba(0,0,0,0.5)' }}/>
+            )}
           </Marker>
         )}
 
@@ -526,6 +612,90 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
         }}>
           <div style={{ width: 7, height: 7, borderRadius: 99, background: accent, animation: 'pulse 1.2s infinite' }}/>
           <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--c-text-2)' }}>Setting pin…</span>
+        </div>
+      )}
+
+      {/* Navigate button — shown when GPS active + route destination set */}
+      {tracking && arrCoords && !navMode && (
+        <button onClick={() => { setNavMode(true); setArrived(false); setFollow(true); }} style={{
+          position: 'absolute', bottom: 284, right: 14, zIndex: 1000,
+          padding: '0 14px', height: 36, borderRadius: 10,
+          background: accent, color: '#06151E',
+          fontSize: 12.5, fontWeight: 700, letterSpacing: '0.04em',
+          border: 'none', cursor: 'pointer',
+          boxShadow: `0 0 0 3px ${accent}44, 0 4px 14px rgba(0,0,0,0.5)`,
+        }}>
+          Navigate
+        </button>
+      )}
+
+      {/* Navigation HUD */}
+      {navMode && (() => {
+        const distNm = userPos && arrCoords
+          ? (route?.waypoints?.length >= 2
+              ? _routeRemainingNm(route.waypoints, userPos.lat, userPos.lng)
+              : _haversineNm(userPos.lat, userPos.lng, arrCoords[0], arrCoords[1]))
+          : null;
+        const etaVal = distNm != null ? _etaStr(distNm, userPos?.speedKts) : null;
+
+        return (
+          <div style={{
+            position: 'absolute', bottom: 284, left: 12, right: 12, zIndex: 1000,
+            background: 'rgba(8,17,28,0.97)', border: '1px solid var(--c-border)',
+            borderRadius: 18, overflow: 'hidden',
+            boxShadow: '0 -4px 30px rgba(0,0,0,0.6)',
+            backdropFilter: 'blur(16px)',
+          }}>
+            {/* Destination bar */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px 0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Icon name="pin" size={13} color={accent} sw={2.2}/>
+                <span style={{ fontSize: 12.5, color: 'var(--c-text)', fontWeight: 700, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {route?.to || 'Destination'}
+                </span>
+              </div>
+              <button onClick={() => setNavMode(false)} style={{
+                all: 'unset', cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                color: 'var(--c-text-4)', background: 'var(--c-surface-alt)',
+                padding: '3px 10px', borderRadius: 6,
+              }}>End</button>
+            </div>
+
+            {/* Metrics row */}
+            <div style={{ display: 'flex', padding: '8px 10px 12px', gap: 2 }}>
+              {[
+                { label: 'Speed', val: userPos?.speedKts != null ? `${userPos.speedKts.toFixed(1)}` : '—', unit: 'kt' },
+                { label: 'Heading', val: userPos?.heading != null ? _compassDir(userPos.heading) : '—', unit: userPos?.heading != null ? `${Math.round(userPos.heading)}°` : '' },
+                { label: 'Distance', val: distNm != null ? distNm.toFixed(1) : '—', unit: 'nm' },
+                { label: 'ETA', val: etaVal || (userPos?.speedKts != null && userPos.speedKts < 0.5 ? 'Stopped' : '—'), unit: '' },
+              ].map(({ label, val, unit }) => (
+                <div key={label} style={{ flex: 1, textAlign: 'center', padding: '6px 4px', borderRadius: 10, background: 'rgba(255,255,255,0.04)' }}>
+                  <div style={{ fontSize: 10, color: 'var(--c-text-4)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 3 }}>{label}</div>
+                  <div style={{ fontSize: 17, color: 'var(--c-text)', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{val}</div>
+                  {unit && <div style={{ fontSize: 10, color: 'var(--c-text-3)', marginTop: 2 }}>{unit}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Arrival overlay */}
+      {arrived && navMode && (
+        <div style={{
+          position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', zIndex: 1100,
+          background: 'rgba(8,17,28,0.97)', border: `1.5px solid ${accent}`,
+          borderRadius: 22, padding: '28px 32px', textAlign: 'center',
+          boxShadow: `0 0 0 6px ${accent}22, 0 12px 40px rgba(0,0,0,0.8)`,
+          backdropFilter: 'blur(20px)',
+        }}>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>⚓</div>
+          <div style={{ fontSize: 20, color: 'var(--c-text)', fontWeight: 800, marginBottom: 6 }}>You've arrived!</div>
+          <div style={{ fontSize: 13, color: 'var(--c-text-3)', marginBottom: 20 }}>{route?.to || 'Destination'}</div>
+          <button onClick={() => { setNavMode(false); setArrived(false); }} style={{
+            all: 'unset', cursor: 'pointer', padding: '10px 24px', borderRadius: 12,
+            background: accent, color: '#06151E', fontSize: 14, fontWeight: 700,
+          }}>Done</button>
         </div>
       )}
 
