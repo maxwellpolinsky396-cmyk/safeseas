@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import Map, { Marker, Popup, Source, Layer } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import { io as socketIO } from 'socket.io-client'
 import { IOSDevice, IOSStatusBar } from './ios-frame'
 import { useTweaks, TweaksPanel, TweakSection, TweakColor, TweakRadio, TweakToggle } from './tweaks-panel'
 
@@ -67,6 +68,7 @@ const Icon = ({ name, size = 22, color = 'currentColor', sw = 1.8 }) => {
     trash:    <><path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M9 6V4h6v2" {...p}/></>,
     settings: <><circle cx="12" cy="12" r="3" {...p}/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" {...p}/></>,
     anchor:   <><circle cx="12" cy="5" r="3" {...p}/><path d="M12 8v13M5 12a7 7 0 0 0 14 0M5 12H2M22 12h-3" {...p}/></>,
+    chat:     <><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" {...p}/></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24">{paths[name]}</svg>;
 };
@@ -2471,10 +2473,235 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
   );
 }
 
-function TabBar({ tab, setTab, accent }) {
+// ─────────────────────────────────────────────────────────────
+// CHAT SCREEN
+// ─────────────────────────────────────────────────────────────
+
+const MSG_TYPES = {
+  general: { label: 'General',   color: null,      icon: '💬' },
+  hazard:  { label: 'Hazard',    color: '#EF4444', icon: '⚠️' },
+  rescue:  { label: 'CG Alert',  color: '#F97316', icon: '🆘' },
+};
+
+function _timeSince(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60)   return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+}
+
+function _distNmBetween(lat1, lon1, lat2, lon2) {
+  if (lat1==null||lon1==null||lat2==null||lon2==null) return null;
+  return _haversineNm(lat1, lon1, lat2, lon2);
+}
+
+function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
+  const [messages, setMessages]   = useState([]);
+  const [input, setInput]         = useState('');
+  const [msgType, setMsgType]     = useState('general');
+  const [pos, setPos]             = useState(null);   // { lat, lon }
+  const [status, setStatus]       = useState('connecting'); // connecting | joined | error
+  const [areaName, setAreaName]   = useState(null);
+  const socketRef  = useRef(null);
+  const listRef    = useRef(null);
+  const inputRef   = useRef(null);
+
+  // Get position: try GPS first, fall back to route departure
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        p  => setPos({ lat: p.coords.latitude,  lon: p.coords.longitude }),
+        () => { if (routeDep) setPos({ lat: routeDep[0], lon: routeDep[1] }); },
+        { timeout: 6000, maximumAge: 120000 },
+      );
+    } else if (routeDep) {
+      setPos({ lat: routeDep[0], lon: routeDep[1] });
+    }
+  }, []);
+
+  // Reverse-geocode the position for a friendly area label
+  useEffect(() => {
+    if (!pos) return;
+    fetch(`${API}/api/reverse-geocode?lat=${pos.lat}&lon=${pos.lon}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => d?.name ? setAreaName(d.name) : null)
+      .catch(() => {});
+  }, [pos?.lat, pos?.lon]);
+
+  // Connect socket and join room when position is known
+  useEffect(() => {
+    if (!pos || !authToken) return;
+
+    const socket = socketIO(API, { auth: { token: authToken }, transports: ['websocket'] });
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      socket.emit('join', { lat: pos.lat, lon: pos.lon });
+      setStatus('joined');
+    });
+    socket.on('connect_error', () => setStatus('error'));
+    socket.on('history', msgs => setMessages(msgs));
+    socket.on('message', msg  => {
+      setMessages(prev => [...prev, msg]);
+      if (msg.userId !== user?.id && onNewMessage) onNewMessage(msg);
+    });
+
+    return () => { socket.disconnect(); socketRef.current = null; };
+  }, [pos?.lat, pos?.lon, authToken]);
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [messages.length]);
+
+  const send = useCallback(() => {
+    const text = input.trim();
+    if (!text || !socketRef.current || status !== 'joined') return;
+    socketRef.current.emit('message', { lat: pos?.lat, lon: pos?.lon, text, type: msgType });
+    setInput('');
+  }, [input, msgType, pos, status]);
+
+  const onKey = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
+
+  const accentColor = accent || '#22E3D0';
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--c-bg)' }}>
+
+      {/* Header */}
+      <div style={{ padding: '18px 20px 12px', borderBottom: '1px solid var(--c-border)', flexShrink: 0 }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--c-text-3)', fontWeight: 600, textTransform: 'uppercase' }}>Live</div>
+        <div style={{ fontSize: 26, color: 'var(--c-text)', fontWeight: 700, letterSpacing: '-0.02em', marginTop: 2 }}>Nearby Radio</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+          <div style={{
+            width: 7, height: 7, borderRadius: 99,
+            background: status === 'joined' ? '#22C55E' : status === 'error' ? '#EF4444' : '#F59E0B',
+            boxShadow: status === 'joined' ? '0 0 6px #22C55E' : 'none',
+          }}/>
+          <span style={{ fontSize: 12, color: 'var(--c-text-3)', fontWeight: 500 }}>
+            {status === 'joined'
+              ? (areaName ? `Chatting near ${areaName}` : 'Connected to local area')
+              : status === 'error' ? 'Connection failed — check your internet'
+              : 'Locating you…'}
+          </span>
+        </div>
+      </div>
+
+      {/* Message type selector */}
+      <div style={{ display: 'flex', gap: 6, padding: '10px 16px', borderBottom: '1px solid var(--c-border)', flexShrink: 0 }}>
+        {Object.entries(MSG_TYPES).map(([key, t]) => (
+          <button key={key} onClick={() => setMsgType(key)} style={{
+            all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5,
+            padding: '5px 10px', borderRadius: 99, fontSize: 11.5, fontWeight: 600,
+            background: msgType === key ? (t.color ? `${t.color}22` : `${accentColor}22`) : 'var(--c-surface)',
+            border: `1px solid ${msgType === key ? (t.color || accentColor) : 'var(--c-border)'}`,
+            color: msgType === key ? (t.color || accentColor) : 'var(--c-text-3)',
+          }}>
+            <span style={{ fontSize: 13 }}>{t.icon}</span> {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Messages */}
+      <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {messages.length === 0 && status === 'joined' && (
+          <div style={{ textAlign: 'center', color: 'var(--c-text-4)', fontSize: 13, paddingTop: 40 }}>
+            No messages yet in this area.<br/>Be the first to say something.
+          </div>
+        )}
+        {messages.length === 0 && status !== 'joined' && status !== 'error' && (
+          <div style={{ textAlign: 'center', color: 'var(--c-text-4)', fontSize: 13, paddingTop: 40 }}>
+            Getting your location…
+          </div>
+        )}
+        {messages.map(msg => {
+          const isMe = msg.userId === user?.id;
+          const t    = MSG_TYPES[msg.type] || MSG_TYPES.general;
+          const bubbleColor = t.color
+            ? { bg: `${t.color}18`, border: `${t.color}44`, text: t.color }
+            : isMe
+              ? { bg: `${accentColor}18`, border: `${accentColor}44`, text: accentColor }
+              : { bg: 'var(--c-surface)', border: 'var(--c-border)', text: 'var(--c-text)' };
+          const dist = isMe ? null : _distNmBetween(pos?.lat, pos?.lon, msg.lat, msg.lon);
+          const initials = (msg.name || '?')[0].toUpperCase();
+
+          return (
+            <div key={msg.id} style={{ display: 'flex', gap: 8, flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end' }}>
+              {!isMe && (
+                <div style={{
+                  width: 30, height: 30, borderRadius: 99, flexShrink: 0,
+                  background: `${accentColor}22`, border: `1.5px solid ${accentColor}44`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 12, fontWeight: 700, color: accentColor,
+                }}>{initials}</div>
+              )}
+              <div style={{ maxWidth: '72%', display: 'flex', flexDirection: 'column', gap: 3, alignItems: isMe ? 'flex-end' : 'flex-start' }}>
+                {!isMe && (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', paddingLeft: 2 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--c-text-2)' }}>{msg.name}</span>
+                    {dist != null && <span style={{ fontSize: 10, color: 'var(--c-text-4)' }}>{dist.toFixed(1)} nm away</span>}
+                  </div>
+                )}
+                <div style={{
+                  padding: '8px 12px', borderRadius: isMe ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                  background: bubbleColor.bg, border: `1px solid ${bubbleColor.border}`,
+                  fontSize: 14, color: msg.type !== 'general' ? bubbleColor.text : 'var(--c-text)', lineHeight: 1.45,
+                  wordBreak: 'break-word',
+                }}>
+                  {msg.type !== 'general' && <span style={{ marginRight: 5 }}>{t.icon}</span>}
+                  {msg.text}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--c-text-5)', paddingInline: 4 }}>{_timeSince(msg.ts)}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Input bar */}
+      <div style={{
+        padding: '10px 12px 16px', borderTop: '1px solid var(--c-border)', flexShrink: 0,
+        background: 'var(--c-bg)', display: 'flex', gap: 8, alignItems: 'flex-end',
+      }}>
+        <textarea
+          ref={inputRef}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={onKey}
+          placeholder={msgType === 'hazard' ? 'Describe the hazard…' : msgType === 'rescue' ? 'Describe the emergency…' : 'Message nearby boaters…'}
+          rows={1}
+          style={{
+            flex: 1, padding: '10px 14px', borderRadius: 14, resize: 'none',
+            border: `1px solid ${msgType !== 'general' ? (MSG_TYPES[msgType].color || accentColor) : 'var(--c-border)'}`,
+            background: 'var(--c-surface)', color: 'var(--c-text)', fontSize: 14,
+            outline: 'none', fontFamily: 'inherit', lineHeight: 1.4, maxHeight: 100, overflowY: 'auto',
+          }}
+        />
+        <button onClick={send} disabled={!input.trim() || status !== 'joined'} style={{
+          all: 'unset', cursor: input.trim() && status === 'joined' ? 'pointer' : 'default',
+          width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+          background: input.trim() && status === 'joined'
+            ? (msgType !== 'general' ? MSG_TYPES[msgType].color : accentColor)
+            : 'var(--c-surface)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          transition: 'background 0.15s',
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+            stroke={input.trim() && status === 'joined' ? '#06151E' : 'var(--c-text-4)'}
+            strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 2 11 13M22 2 15 22l-4-9-9-4z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TabBar({ tab, setTab, accent, chatUnread = 0 }) {
   const tabs = [
     { id: 'home',     label: 'Home',     icon: 'home'     },
     { id: 'trip',     label: 'Trip',     icon: 'compass'  },
+    { id: 'chat',     label: 'Radio',    icon: 'chat'     },
     { id: 'boat',     label: 'Boat',     icon: 'boat'     },
     { id: 'settings', label: 'Settings', icon: 'settings' },
   ];
@@ -2494,13 +2721,26 @@ function TabBar({ tab, setTab, accent }) {
       }}>
         {tabs.map(t => {
           const on = tab === t.id;
+          const badge = t.id === 'chat' && chatUnread > 0 && !on;
           return (
             <button key={t.id} onClick={() => setTab(t.id)} style={{
               all: 'unset', cursor: 'pointer', flex: 1,
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
               gap: 3, color: on ? accent : 'var(--c-text-3)',
             }}>
-              <Icon name={t.icon} size={22} sw={on ? 2.2 : 1.8}/>
+              <div style={{ position: 'relative' }}>
+                <Icon name={t.icon} size={22} sw={on ? 2.2 : 1.8}/>
+                {badge && (
+                  <div style={{
+                    position: 'absolute', top: -3, right: -4,
+                    minWidth: 14, height: 14, borderRadius: 99,
+                    background: '#EF4444', color: 'white',
+                    fontSize: 8.5, fontWeight: 800,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    paddingInline: 2,
+                  }}>{chatUnread > 9 ? '9+' : chatUnread}</div>
+                )}
+              </div>
               <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.02em' }}>{t.label}</span>
             </button>
           );
@@ -2547,6 +2787,7 @@ function App() {
 
   // ── App state ──
   const [tab, setTab] = useState('home');
+  const [chatUnread, setChatUnread] = useState(0);
   const [boat, setBoat] = useState(null);
   const [boats, setBoats] = useState([]);
   const [presetBoats, setPresetBoats] = useState([]);
@@ -2861,6 +3102,16 @@ function App() {
                     }}
                   />
                 </div>
+              ) : tab === 'chat' ? (
+                <div style={{ position: 'absolute', inset: 0, paddingBottom: 100 }}>
+                  <ChatScreen
+                    accent={t.accent}
+                    authToken={authToken}
+                    user={user}
+                    routeDep={route?.fromLat ? [parseFloat(route.fromLat), parseFloat(route.fromLon)] : null}
+                    onNewMessage={() => setChatUnread(n => n + 1)}
+                  />
+                </div>
               ) : (
                 <div style={{ position: 'absolute', inset: 0, overflow: 'auto', paddingBottom: 110 }}>
                   {tab === 'home' && (
@@ -2909,7 +3160,7 @@ function App() {
                   )}
                 </div>
               )}
-              <TabBar tab={tab} setTab={setTab} accent={t.accent}/>
+              <TabBar tab={tab} setTab={(id) => { setTab(id); if (id === 'chat') setChatUnread(0); }} accent={t.accent} chatUnread={chatUnread}/>
             </>
           )}
         </div>

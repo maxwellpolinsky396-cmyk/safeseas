@@ -1,10 +1,12 @@
 require('dotenv').config();
+const http    = require('http');
 const express = require('express');
-const cors = require('cors');
-const db = require('./src/db');
-const safety = require('./src/safety');
-const geocode = require('./src/geocode');
-const mailer = require('./src/mailer');
+const cors    = require('cors');
+const { Server: SocketServer } = require('socket.io');
+const db       = require('./src/db');
+const safety   = require('./src/safety');
+const geocode  = require('./src/geocode');
+const mailer   = require('./src/mailer');
 const maritime = require('./src/maritime');
 
 // In-memory store: email -> { code, expires }
@@ -13,6 +15,63 @@ const resetCodes = new Map();
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// ── Chat (Socket.io) ─────────────────────────────────────────────────────────
+
+const httpServer = http.createServer(app);
+const io = new SocketServer(httpServer, { cors: { origin: '*' } });
+
+// roomKey: 0.25° grid cell (~15 nm). Users in the same cell chat together.
+function roomKey(lat, lon) {
+  return `${Math.floor(lat / 0.25)},${Math.floor(lon / 0.25)}`;
+}
+
+// Per-room message history (last 60 messages, ephemeral — in memory only).
+const roomHistory = new Map();
+function roomPush(room, msg) {
+  const msgs = roomHistory.get(room) || [];
+  msgs.push(msg);
+  if (msgs.length > 60) msgs.splice(0, msgs.length - 60);
+  roomHistory.set(room, msgs);
+}
+
+io.use(async (socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token) return next(new Error('Unauthorized'));
+  const user = await db.getUserByToken(token).catch(() => null);
+  if (!user) return next(new Error('Invalid token'));
+  socket.user = user;
+  next();
+});
+
+io.on('connection', socket => {
+  let currentRoom = null;
+
+  socket.on('join', ({ lat, lon }) => {
+    if (typeof lat !== 'number' || typeof lon !== 'number') return;
+    if (currentRoom) socket.leave(currentRoom);
+    currentRoom = roomKey(lat, lon);
+    socket.join(currentRoom);
+    socket.emit('history', roomHistory.get(currentRoom) || []);
+  });
+
+  socket.on('message', ({ lat, lon, text, type }) => {
+    if (!currentRoom || !text?.trim()) return;
+    const allowed = ['general', 'hazard', 'rescue'];
+    const msg = {
+      id:     Math.random().toString(36).slice(2, 10),
+      userId: socket.user.id,
+      name:   socket.user.name,
+      lat:    typeof lat === 'number' ? lat : null,
+      lon:    typeof lon === 'number' ? lon : null,
+      text:   String(text).slice(0, 400).trim(),
+      type:   allowed.includes(type) ? type : 'general',
+      ts:     Date.now(),
+    };
+    roomPush(currentRoom, msg);
+    io.to(currentRoom).emit('message', msg);
+  });
+});
 
 // ── Auth middleware ──────────────────────────────────────────────────────────
 
@@ -284,4 +343,4 @@ app.post('/api/feedback', requireAuth, async (req, res) => {
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`SafeSeas API running on http://localhost:${PORT}`));
+httpServer.listen(PORT, () => console.log(`SafeSeas API running on http://localhost:${PORT}`));
