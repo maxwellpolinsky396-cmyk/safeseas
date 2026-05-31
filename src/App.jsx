@@ -1543,7 +1543,7 @@ function DisclaimerScreen({ onAccept, accent }) {
 // ─────────────────────────────────────────────────────────────
 // HOME SCREEN
 // ─────────────────────────────────────────────────────────────
-function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, currentStatus, trips, route, onUpdateRoute, routeSafety, user, onSettings, profileColor, onPickBoat }) {
+function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, currentStatus, trips, route, onUpdateRoute, routeSafety, user, onSettings, profileColor, onPickBoat, onRouteTo, userPos }) {
   const [focus, setFocus] = useState(false);
   const [from, setFrom] = useState(route?.from || 'Anna Maria Island');
   const [to, setTo] = useState(route?.to || 'Egmont Key');
@@ -1556,16 +1556,18 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
   const fetchTimer = useRef(null);
   const [nearby, setNearby] = useState({ fuel:[], ramps:[], hazards:[], bridges:[] });
   const [alerts, setAlerts] = useState([]);
-  const [nearbyLoaded, setNearbyLoaded] = useState(false);
+
+  // Re-fetch when real GPS position first arrives; throttled to ~1.1km movement to avoid hammering Overpass
+  const nearbyFetchKey = userPos
+    ? `${Math.round(userPos.lat * 100)},${Math.round(userPos.lng * 100)}`
+    : (route?.fromLat || 'default');
 
   useEffect(() => {
-    const lat = parseFloat(route?.fromLat) || 27.4976;
-    const lon = parseFloat(route?.fromLon) || -82.7196;
-    if (nearbyLoaded) return;
-    setNearbyLoaded(true);
+    const lat = userPos?.lat ?? parseFloat(route?.fromLat) ?? 27.4976;
+    const lon = userPos?.lng ?? parseFloat(route?.fromLon) ?? -82.7196;
     _fetchNearbyPlaces(lat, lon).then(setNearby).catch(()=>{});
     _fetchAlerts(lat, lon).then(setAlerts).catch(()=>{});
-  }, [route?.fromLat, route?.fromLon]);
+  }, [nearbyFetchKey]);
 
   const fetchSuggestions = async (q, which) => {
     if (!q || q.length < 2) {
@@ -1635,8 +1637,14 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
     <div style={{ padding: '8px 20px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
         <div>
-          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--c-text-3)', fontWeight: 600, textTransform: 'uppercase' }}>
+          <div style={{ fontSize: 11, letterSpacing: '0.14em', color: 'var(--c-text-3)', fontWeight: 600, textTransform: 'uppercase', display:'flex', alignItems:'center', gap:5 }}>
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+            {userPos && (
+              <span style={{ display:'inline-flex', alignItems:'center', gap:3, color: accent, fontWeight:700, letterSpacing:'0.06em' }}>
+                <span style={{ width:5, height:5, borderRadius:99, background:accent, display:'inline-block', boxShadow:`0 0 6px ${accent}` }}/>
+                LIVE
+              </span>
+            )}
           </div>
           <div style={{ fontSize: 22, color: 'var(--c-text)', fontWeight: 700, letterSpacing: '-0.02em', marginTop: 2 }}>
             {greeting}, {firstName}
@@ -1827,14 +1835,23 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
           <div style={{ fontSize:11, color:'var(--c-text-3)', fontWeight:600, letterSpacing:'0.1em', textTransform:'uppercase', marginBottom:8 }}>⛽ Fuel Docks Nearby</div>
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
             {nearby.fuel.map((f,i) => (
-              <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px',
-                background:'var(--c-surface)', border:'1px solid var(--c-border)', borderRadius:12 }}>
+              <button key={i} onClick={() => onRouteTo && f.lat != null && onRouteTo({ name: f.name, lat: f.lat, lon: f.lon })}
+                style={{ all:'unset', cursor: onRouteTo && f.lat != null ? 'pointer' : 'default',
+                  display:'flex', alignItems:'center', gap:10, padding:'10px 14px',
+                  background:'var(--c-surface)', border:'1px solid var(--c-border)', borderRadius:12,
+                  transition:'opacity 0.12s' }}
+                onMouseEnter={e => { if (onRouteTo && f.lat != null) e.currentTarget.style.opacity='0.8'; }}
+                onMouseLeave={e => { e.currentTarget.style.opacity='1'; }}>
                 <div style={{ width:32, height:32, borderRadius:99, background:'#16351D', display:'grid', placeItems:'center', flexShrink:0, fontSize:15 }}>⛽</div>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:13, color:'var(--c-text)', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{f.name}</div>
+                  {onRouteTo && f.lat != null && <div style={{ fontSize:11, color: accent, marginTop:1, fontWeight:600 }}>Tap to navigate</div>}
                 </div>
-                <span style={{ fontSize:12, color:'var(--c-text-3)', fontWeight:600, flexShrink:0 }}>{f.dist.toFixed(1)} nm</span>
-              </div>
+                <div style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
+                  <span style={{ fontSize:12, color:'var(--c-text-3)', fontWeight:600 }}>{f.dist.toFixed(1)} nm</span>
+                  {onRouteTo && f.lat != null && <Icon name="chevron" size={14} color="var(--c-text-4)" sw={2.5}/>}
+                </div>
+              </button>
             ))}
           </div>
         </div>
@@ -1846,15 +1863,25 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
           <div style={{ fontSize:11, color:'var(--c-text-3)', fontWeight:600, letterSpacing:'0.1em', textTransform:'uppercase', marginBottom:8 }}>⚓ Ramps & Marinas Nearby</div>
           <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
             {nearby.ramps.map((r,i) => (
-              <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px',
-                background:'var(--c-surface)', border:'1px solid var(--c-border)', borderRadius:12 }}>
+              <button key={i} onClick={() => onRouteTo && r.lat != null && onRouteTo({ name: r.name, lat: r.lat, lon: r.lon })}
+                style={{ all:'unset', cursor: onRouteTo && r.lat != null ? 'pointer' : 'default',
+                  display:'flex', alignItems:'center', gap:10, padding:'10px 14px',
+                  background:'var(--c-surface)', border:'1px solid var(--c-border)', borderRadius:12,
+                  transition:'opacity 0.12s' }}
+                onMouseEnter={e => { if (onRouteTo && r.lat != null) e.currentTarget.style.opacity='0.8'; }}
+                onMouseLeave={e => { e.currentTarget.style.opacity='1'; }}>
                 <div style={{ width:32, height:32, borderRadius:99, background:'#0E2238', display:'grid', placeItems:'center', flexShrink:0, fontSize:15 }}>{r.isRamp?'🚤':'⚓'}</div>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:13, color:'var(--c-text)', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{r.name}</div>
-                  <div style={{ fontSize:11, color:'var(--c-text-4)', marginTop:1 }}>{r.isRamp?'Boat Ramp':'Marina'}</div>
+                  <div style={{ fontSize:11, color: onRouteTo && r.lat != null ? accent : 'var(--c-text-4)', marginTop:1, fontWeight: onRouteTo && r.lat != null ? 600 : 400 }}>
+                    {onRouteTo && r.lat != null ? 'Tap to navigate' : (r.isRamp ? 'Boat Ramp' : 'Marina')}
+                  </div>
                 </div>
-                <span style={{ fontSize:12, color:'var(--c-text-3)', fontWeight:600, flexShrink:0 }}>{r.dist.toFixed(1)} nm</span>
-              </div>
+                <div style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
+                  <span style={{ fontSize:12, color:'var(--c-text-3)', fontWeight:600 }}>{r.dist.toFixed(1)} nm</span>
+                  {onRouteTo && r.lat != null && <Icon name="chevron" size={14} color="var(--c-text-4)" sw={2.5}/>}
+                </div>
+              </button>
             ))}
           </div>
         </div>
@@ -3223,6 +3250,21 @@ function App() {
   const [routingActive, setRoutingActive] = useState(false);
   const homeStatus = routeSafety?.verdict || t.verdict;
 
+  // ── Global GPS (runs on all tabs so Home nearby uses real position) ──
+  const [appUserPos, setAppUserPos] = useState(null);
+  const appGpsWatchRef = useRef(null);
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    appGpsWatchRef.current = navigator.geolocation.watchPosition(
+      pos => setAppUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    );
+    return () => {
+      if (appGpsWatchRef.current != null) navigator.geolocation.clearWatch(appGpsWatchRef.current);
+    };
+  }, []);
+
   const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {};
 
   // Verify token on mount
@@ -3555,6 +3597,16 @@ function App() {
                         // Clear computed route whenever endpoints change so stale waypoints don't linger
                         waypoints: null, fromSnapped: null, toSnapped: null,
                       }))}
+                      userPos={appUserPos}
+                      onRouteTo={({ name, lat, lon }) => {
+                        const depLat = appUserPos?.lat ?? route.fromLat;
+                        const depLon = appUserPos?.lng ?? route.fromLon;
+                        const depName = appUserPos ? 'My Location' : route.from;
+                        planRoute({
+                          from: depName, fromLat: String(depLat), fromLon: String(depLon),
+                          to: name, toLat: String(lat), toLon: String(lon),
+                        });
+                      }}
                       onSelectBoat={(b) => setBoat(b)}
                       onPickBoat={() => setTab('boat')}
                       trips={trips}
