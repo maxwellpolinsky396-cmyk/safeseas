@@ -2499,27 +2499,32 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
   const [messages, setMessages]   = useState([]);
   const [input, setInput]         = useState('');
   const [msgType, setMsgType]     = useState('general');
-  const [pos, setPos]             = useState(null);   // { lat, lon }
-  const [status, setStatus]       = useState('connecting'); // connecting | joined | error
+  const [pos, setPos]             = useState(null);
+  const [status, setStatus]       = useState('connecting');
   const [areaName, setAreaName]   = useState(null);
   const socketRef  = useRef(null);
   const listRef    = useRef(null);
   const inputRef   = useRef(null);
 
-  // Get position: try GPS first, fall back to route departure
+  // Resolve position: GPS → route departure → default (Tampa Bay).
+  // Always resolves — never leaves pos null.
   useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        p  => setPos({ lat: p.coords.latitude,  lon: p.coords.longitude }),
-        () => { if (routeDep) setPos({ lat: routeDep[0], lon: routeDep[1] }); },
-        { timeout: 6000, maximumAge: 120000 },
-      );
-    } else if (routeDep) {
-      setPos({ lat: routeDep[0], lon: routeDep[1] });
-    }
+    const fallback = { lat: 27.4976, lon: -82.7196 };
+    const useDep   = routeDep ? { lat: routeDep[0], lon: routeDep[1] } : fallback;
+
+    if (!navigator.geolocation) { setPos(useDep); return; }
+
+    const id = navigator.geolocation.getCurrentPosition(
+      p  => setPos({ lat: p.coords.latitude, lon: p.coords.longitude }),
+      () => setPos(useDep),
+      { timeout: 6000, maximumAge: 120000 },
+    );
+    // Guarantee resolution even if geolocation hangs
+    const guard = setTimeout(() => setPos(prev => prev ?? useDep), 7000);
+    return () => clearTimeout(guard);
   }, []);
 
-  // Reverse-geocode the position for a friendly area label
+  // Reverse-geocode for friendly area label
   useEffect(() => {
     if (!pos) return;
     fetch(`${API}/api/reverse-geocode?lat=${pos.lat}&lon=${pos.lon}`)
@@ -2528,38 +2533,43 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
       .catch(() => {});
   }, [pos?.lat, pos?.lon]);
 
-  // Connect socket and join room when position is known
+  // Connect socket immediately on mount; join room when pos arrives
   useEffect(() => {
-    if (!pos || !authToken) return;
-
-    const socket = socketIO(API, { auth: { token: authToken }, transports: ['websocket'] });
+    if (!authToken) return;
+    const socket = socketIO(API, { auth: { token: authToken } });
     socketRef.current = socket;
-
-    socket.on('connect', () => {
-      socket.emit('join', { lat: pos.lat, lon: pos.lon });
-      setStatus('joined');
-    });
+    socket.on('connect', () => { if (pos) setStatus('joined'); })
     socket.on('connect_error', () => setStatus('error'));
-    socket.on('history', msgs => setMessages(msgs));
+    socket.on('history', msgs => { setMessages(msgs); setStatus('joined'); });
     socket.on('message', msg  => {
       setMessages(prev => [...prev, msg]);
       if (msg.userId !== user?.id && onNewMessage) onNewMessage(msg);
     });
+    return () => { socket.disconnect(); socketRef.current = null; setStatus('connecting'); };
+  }, [authToken]);
 
-    return () => { socket.disconnect(); socketRef.current = null; };
-  }, [pos?.lat, pos?.lon, authToken]);
+  // Emit join whenever pos changes (or when socket first connects with pos already set)
+  useEffect(() => {
+    if (!pos || !socketRef.current) return;
+    const s = socketRef.current;
+    const doJoin = () => { s.emit('join', { lat: pos.lat, lon: pos.lon }); setStatus('joined'); };
+    if (s.connected) { doJoin(); }
+    else { s.once('connect', doJoin); }
+  }, [pos?.lat, pos?.lon]);
 
   // Scroll to bottom on new messages
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages.length]);
 
+  const canSend = input.trim().length > 0 && socketRef.current?.connected && pos != null;
+
   const send = useCallback(() => {
     const text = input.trim();
-    if (!text || !socketRef.current || status !== 'joined') return;
-    socketRef.current.emit('message', { lat: pos?.lat, lon: pos?.lon, text, type: msgType });
+    if (!text || !socketRef.current?.connected || !pos) return;
+    socketRef.current.emit('message', { lat: pos.lat, lon: pos.lon, text, type: msgType });
     setInput('');
-  }, [input, msgType, pos, status]);
+  }, [input, msgType, pos]);
 
   const onKey = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
 
@@ -2677,17 +2687,17 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
             outline: 'none', fontFamily: 'inherit', lineHeight: 1.4, maxHeight: 100, overflowY: 'auto',
           }}
         />
-        <button onClick={send} disabled={!input.trim() || status !== 'joined'} style={{
-          all: 'unset', cursor: input.trim() && status === 'joined' ? 'pointer' : 'default',
+        <button onClick={send} disabled={!canSend} style={{
+          all: 'unset', cursor: canSend ? 'pointer' : 'default',
           width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-          background: input.trim() && status === 'joined'
+          background: canSend
             ? (msgType !== 'general' ? MSG_TYPES[msgType].color : accentColor)
             : 'var(--c-surface)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           transition: 'background 0.15s',
         }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-            stroke={input.trim() && status === 'joined' ? '#06151E' : 'var(--c-text-4)'}
+            stroke={canSend ? '#06151E' : 'var(--c-text-4)'}
             strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M22 2 11 13M22 2 15 22l-4-9-9-4z"/>
           </svg>
