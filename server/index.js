@@ -388,6 +388,18 @@ app.post('/api/friends/respond', requireAuth, async (req, res) => {
   }
 });
 
+// ── Public user profiles (shown when tapping a chat message) ────────────────
+app.get('/api/users/:id/profile', requireAuth, async (req, res) => {
+  try {
+    const profile = await db.getUserPublicProfile(Number(req.params.id));
+    if (!profile) return res.status(404).json({ error: 'User not found' });
+    res.json(profile);
+  } catch (err) {
+    console.error('profile error', err);
+    res.status(500).json({ error: 'Failed to load profile' });
+  }
+});
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 4000;

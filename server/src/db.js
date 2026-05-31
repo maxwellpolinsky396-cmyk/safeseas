@@ -202,6 +202,24 @@ function jsonStore() {
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     },
 
+    getUserPublicProfile: async (userId) => {
+      const data = read();
+      const user = data.users.find(u => u.id === userId);
+      if (!user) return null;
+      const boats = (data.userBoats || []).filter(b => b.userId === userId);
+      const trips = (data.trips || [])
+        .filter(t => t.userId === userId)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(0, 5);
+      return {
+        id: user.id,
+        name: user.name,
+        memberSince: user.created_at,
+        boats: boats.map(b => ({ name: b.name, type: b.type, length: b.length, year: b.year })),
+        recentRoutes: trips.map(t => ({ from: t.from, to: t.to, date: t.created_at })),
+      };
+    },
+
     addTrip: async (userId, trip) => {
       const data = read();
       const id = (data.trips.reduce((m, t) => Math.max(m, t.id || 0), 0)) + 1;
@@ -437,4 +455,5 @@ module.exports = {
   sendFriendRequest: async (fromId, toId) => (await init()).sendFriendRequest(fromId, toId),
   respondFriendRequest: async (requestId, userId, action) => (await init()).respondFriendRequest(requestId, userId, action),
   getFriends: async (userId) => (await init()).getFriends(userId),
+  getUserPublicProfile: async (userId) => (await init()).getUserPublicProfile(userId),
 };

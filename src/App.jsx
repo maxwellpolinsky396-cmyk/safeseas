@@ -2944,6 +2944,9 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
   const [pos, setPos]             = useState(null);
   const [status, setStatus]       = useState('connecting');
   const [areaName, setAreaName]   = useState(null);
+  const [profileCard, setProfileCard] = useState(null); // { userId, name } → fetched profile
+  const [profileData, setProfileData] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
   const socketRef  = useRef(null);
   const listRef    = useRef(null);
   const inputRef   = useRef(null);
@@ -3004,6 +3007,19 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages.length]);
 
+  const openProfile = async (msg) => {
+    setProfileCard({ userId: msg.userId, name: msg.name });
+    setProfileData(null);
+    setProfileLoading(true);
+    try {
+      const res = await fetch(`${API}/api/users/${msg.userId}/profile`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (res.ok) setProfileData(await res.json());
+    } catch {}
+    setProfileLoading(false);
+  };
+
   const canSend = input.trim().length > 0 && socketRef.current?.connected && pos != null;
 
   const send = useCallback(() => {
@@ -3018,7 +3034,7 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
   const accentColor = accent || '#22E3D0';
 
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--c-bg)' }}>
+    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 94, display: 'flex', flexDirection: 'column', background: 'var(--c-bg)' }}>
 
       {/* Header */}
       <div style={{ padding: '18px 20px 12px', borderBottom: '1px solid var(--c-border)', flexShrink: 0 }}>
@@ -3080,17 +3096,18 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
           return (
             <div key={msg.id} style={{ display: 'flex', gap: 8, flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end' }}>
               {!isMe && (
-                <div style={{
+                <button onClick={() => openProfile(msg)} style={{
+                  all: 'unset', cursor: 'pointer',
                   width: 30, height: 30, borderRadius: 99, flexShrink: 0,
                   background: `${accentColor}22`, border: `1.5px solid ${accentColor}44`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 12, fontWeight: 700, color: accentColor,
-                }}>{initials}</div>
+                }}>{initials}</button>
               )}
               <div style={{ maxWidth: '72%', display: 'flex', flexDirection: 'column', gap: 3, alignItems: isMe ? 'flex-end' : 'flex-start' }}>
                 {!isMe && (
                   <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', paddingLeft: 2 }}>
-                    <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--c-text-2)' }}>{msg.name}</span>
+                    <button onClick={() => openProfile(msg)} style={{ all: 'unset', cursor: 'pointer', fontSize: 11.5, fontWeight: 700, color: 'var(--c-text-2)' }}>{msg.name}</button>
                     {dist != null && <span style={{ fontSize: 10, color: 'var(--c-text-4)' }}>{dist.toFixed(1)} nm away</span>}
                   </div>
                 )}
@@ -3145,6 +3162,94 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
           </svg>
         </button>
       </div>
+
+      {/* Profile card modal */}
+      {profileCard && (
+        <div onClick={() => setProfileCard(null)} style={{
+          position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.55)',
+          display: 'flex', alignItems: 'flex-end', zIndex: 900,
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: '100%', background: 'var(--c-bg)',
+            borderRadius: '20px 20px 0 0', padding: '20px 20px 32px',
+            border: '1px solid var(--c-border)', borderBottom: 'none',
+            display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '70vh', overflowY: 'auto',
+          }}>
+            {/* Handle bar */}
+            <div style={{ width: 36, height: 4, borderRadius: 99, background: 'var(--c-border)', margin: '0 auto -8px' }}/>
+
+            {/* Avatar + name */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div style={{
+                width: 52, height: 52, borderRadius: 99, flexShrink: 0,
+                background: `${accentColor}22`, border: `2px solid ${accentColor}55`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 22, fontWeight: 800, color: accentColor,
+              }}>{(profileCard.name || '?')[0].toUpperCase()}</div>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--c-text)', letterSpacing: '-0.01em' }}>{profileCard.name}</div>
+                {profileData && (
+                  <div style={{ fontSize: 12, color: 'var(--c-text-3)', marginTop: 2 }}>
+                    Member since {new Date(profileData.memberSince).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {profileLoading && (
+              <div style={{ textAlign: 'center', color: 'var(--c-text-4)', fontSize: 13, padding: '12px 0' }}>Loading profile…</div>
+            )}
+
+            {profileData && (
+              <>
+                {/* Boats */}
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+                    Boats ({profileData.boats.length})
+                  </div>
+                  {profileData.boats.length === 0 ? (
+                    <div style={{ fontSize: 13, color: 'var(--c-text-4)' }}>No boats added yet</div>
+                  ) : profileData.boats.map((b, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: 'var(--c-surface)', borderRadius: 12, border: '1px solid var(--c-border)', marginBottom: 6 }}>
+                      <span style={{ fontSize: 18 }}>⛵</span>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)' }}>{b.name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--c-text-4)' }}>{[b.type, b.length, b.year].filter(Boolean).join(' · ')}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Recent routes */}
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+                    Recent Routes
+                  </div>
+                  {profileData.recentRoutes.length === 0 ? (
+                    <div style={{ fontSize: 13, color: 'var(--c-text-4)' }}>No routes yet</div>
+                  ) : profileData.recentRoutes.map((r, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: 'var(--c-surface)', borderRadius: 12, border: '1px solid var(--c-border)', marginBottom: 6 }}>
+                      <Icon name="pin" size={16} color={accentColor} sw={2}/>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {r.from && r.to ? `${r.from} → ${r.to}` : (r.from || r.to || 'Route')}
+                        </div>
+                        {r.date && <div style={{ fontSize: 11, color: 'var(--c-text-4)' }}>{new Date(r.date).toLocaleDateString()}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <button onClick={() => setProfileCard(null)} style={{
+              all: 'unset', cursor: 'pointer', textAlign: 'center',
+              padding: '12px', borderRadius: 14, background: 'var(--c-surface)',
+              border: '1px solid var(--c-border)', fontSize: 14, fontWeight: 600, color: 'var(--c-text-3)',
+            }}>Close</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
