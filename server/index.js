@@ -35,6 +35,20 @@ function roomPush(room, msg) {
   roomHistory.set(room, msgs);
 }
 
+// Per-user last known position & reverse-geocoded label.
+const lastKnownPos  = new Map(); // userId -> { lat, lon }
+const userLocLabels = new Map(); // userId -> "City, ST"
+
+// DM history (last 60 messages per pair, ephemeral).
+const dmHistory = new Map();
+function dmRoomKey(a, b) { return `dm:${Math.min(a, b)}-${Math.max(a, b)}`; }
+function dmPush(room, msg) {
+  const msgs = dmHistory.get(room) || [];
+  msgs.push(msg);
+  if (msgs.length > 60) msgs.splice(0, msgs.length - 60);
+  dmHistory.set(room, msgs);
+}
+
 io.use(async (socket, next) => {
   const token = socket.handshake.auth?.token;
   if (!token) return next(new Error('Unauthorized'));
@@ -53,6 +67,10 @@ io.on('connection', socket => {
     currentRoom = roomKey(lat, lon);
     socket.join(currentRoom);
     socket.emit('history', roomHistory.get(currentRoom) || []);
+    lastKnownPos.set(socket.user.id, { lat, lon });
+    geocode.reverseGeocode(lat, lon).then(name => {
+      if (name) userLocLabels.set(socket.user.id, name);
+    }).catch(() => {});
   });
 
   socket.on('message', ({ lat, lon, text, type }) => {
@@ -70,6 +88,30 @@ io.on('connection', socket => {
     };
     roomPush(currentRoom, msg);
     io.to(currentRoom).emit('message', msg);
+    if (typeof lat === 'number' && typeof lon === 'number') {
+      lastKnownPos.set(socket.user.id, { lat, lon });
+    }
+  });
+
+  socket.on('joinDm', ({ otherId }) => {
+    if (typeof otherId !== 'number') return;
+    const dmRoom = dmRoomKey(socket.user.id, Number(otherId));
+    socket.join(dmRoom);
+    socket.emit('dmHistory', dmHistory.get(dmRoom) || []);
+  });
+
+  socket.on('dmMessage', ({ toUserId, text }) => {
+    if (!text?.trim()) return;
+    const dmRoom = dmRoomKey(socket.user.id, Number(toUserId));
+    const msg = {
+      id:         Math.random().toString(36).slice(2, 10),
+      fromUserId: socket.user.id,
+      fromName:   socket.user.name,
+      text:       String(text).slice(0, 400).trim(),
+      ts:         Date.now(),
+    };
+    dmPush(dmRoom, msg);
+    io.to(dmRoom).emit('dmMessage', msg);
   });
 });
 
@@ -346,7 +388,11 @@ app.get('/api/users/search', requireAuth, async (req, res) => {
     const q = req.query.q || '';
     if (q.trim().length < 2) return res.json([]);
     const results = await db.searchUsers(q, req.user.id);
-    res.json(results);
+    const enriched = results.map(u => ({
+      ...u,
+      locationLabel: userLocLabels.get(u.id) || null,
+    }));
+    res.json(enriched);
   } catch (err) {
     console.error('search-users error', err);
     res.status(500).json({ error: 'Search failed' });

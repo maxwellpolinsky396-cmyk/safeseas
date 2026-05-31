@@ -157,7 +157,19 @@ function jsonStore() {
       return (data.users||[])
         .filter(u => u.id !== excludeId && u.name.toLowerCase().includes(qLower))
         .slice(0,8)
-        .map(u => ({ id:u.id, name:u.name }));
+        .map(u => {
+          const boats = (data.userBoats || []).filter(b => b.userId === u.id);
+          const trips = (data.trips || [])
+            .filter(t => t.userId === u.id)
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(0, 3);
+          return {
+            id: u.id, name: u.name,
+            memberSince: u.created_at,
+            boats: boats.map(b => ({ name: b.name, type: b.type, length: b.length })),
+            recentRoutes: trips.map(t => ({ from: t.from, to: t.to })),
+          };
+        });
     },
     sendFriendRequest: async (fromId, toId) => {
       const data = read();

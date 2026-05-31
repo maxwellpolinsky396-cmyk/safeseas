@@ -2504,7 +2504,7 @@ function Field({ label, value, onChange, placeholder, numeric }) {
 // ─────────────────────────────────────────────────────────────
 const PROFILE_COLORS = ['#22E3D0', '#38BDF8', '#818CF8', '#F472B6', '#FB923C', '#4ADE80', '#FACC15', '#F87171'];
 
-function FriendsSection({ accent, authToken, user }) {
+function FriendsSection({ accent, authToken, user, onOpenDm }) {
   const [friends, setFriends] = useState({ friends: [], incoming: [], outgoing: [] });
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -2610,26 +2610,50 @@ function FriendsSection({ accent, authToken, user }) {
         />
         {searching && <div style={{ fontSize: 12, color: 'var(--c-text-4)', marginTop: 6 }}>Searching…</div>}
         {searchResults.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
             {searchResults.map(u => {
-              const isFriend = friendIds.has(u.id);
+              const isFriend  = friendIds.has(u.id);
               const isPending = outgoingIds.has(u.id) || incomingIds.has(u.id);
               return (
-                <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 99, background: 'var(--c-surface-alt)', display: 'grid', placeItems: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: 'var(--c-text-3)' }}>
-                    {u.name[0].toUpperCase()}
+                <div key={u.id} style={{ background: 'var(--c-surface-alt)', border: '1px solid var(--c-border)', borderRadius: 14, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 99, background: `${accent}22`, border: `1.5px solid ${accent}44`, display: 'grid', placeItems: 'center', flexShrink: 0, fontSize: 13, fontWeight: 700, color: accent }}>
+                      {u.name[0].toUpperCase()}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, color: 'var(--c-text)', fontWeight: 700, lineHeight: 1.2 }}>{u.name}</div>
+                      {u.locationLabel && (
+                        <div style={{ fontSize: 11.5, color: 'var(--c-text-4)', marginTop: 2 }}>📍 {u.locationLabel}</div>
+                      )}
+                    </div>
+                    {isFriend ? (
+                      <span style={{ fontSize: 11.5, color: '#22C55E', fontWeight: 600, flexShrink: 0 }}>Friends</span>
+                    ) : isPending ? (
+                      <span style={{ fontSize: 11.5, color: 'var(--c-text-4)', fontWeight: 600, flexShrink: 0 }}>Pending</span>
+                    ) : (
+                      <button onClick={() => sendRequest(u.id)} style={{
+                        all: 'unset', cursor: 'pointer', padding: '5px 10px', borderRadius: 8,
+                        background: accent + '22', border: `1px solid ${accent}55`,
+                        color: accent, fontSize: 12, fontWeight: 700, flexShrink: 0,
+                      }}>Add</button>
+                    )}
                   </div>
-                  <span style={{ flex: 1, fontSize: 13.5, color: 'var(--c-text)', fontWeight: 600 }}>{u.name}</span>
-                  {isFriend ? (
-                    <span style={{ fontSize: 11.5, color: '#22C55E', fontWeight: 600 }}>Friends</span>
-                  ) : isPending ? (
-                    <span style={{ fontSize: 11.5, color: 'var(--c-text-4)', fontWeight: 600 }}>Pending</span>
-                  ) : (
-                    <button onClick={() => sendRequest(u.id)} style={{
-                      all: 'unset', cursor: 'pointer', padding: '5px 10px', borderRadius: 8,
-                      background: accent + '22', border: `1px solid ${accent}55`,
-                      color: accent, fontSize: 12, fontWeight: 700,
-                    }}>Add</button>
+                  {u.boats?.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {u.boats.map((b, i) => (
+                        <span key={i} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 99, background: 'var(--c-surface)', border: '1px solid var(--c-border)', color: 'var(--c-text-3)', fontWeight: 600 }}>
+                          ⚓ {b.name || b.type}{b.length ? ` · ${b.length}ft` : ''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {u.recentRoutes?.length > 0 && (
+                    <div style={{ fontSize: 11.5, color: 'var(--c-text-4)', lineHeight: 1.6 }}>
+                      <span style={{ fontWeight: 600, color: 'var(--c-text-3)' }}>Recent routes: </span>
+                      {u.recentRoutes.slice(0, 2).map((r, i) => (
+                        <span key={i}>{i > 0 ? ' · ' : ''}{r.from} → {r.to}</span>
+                      ))}
+                    </div>
                   )}
                 </div>
               );
@@ -2650,7 +2674,12 @@ function FriendsSection({ accent, authToken, user }) {
                 <div style={{ width: 32, height: 32, borderRadius: 99, background: accent + '33', display: 'grid', placeItems: 'center', flexShrink: 0, fontSize: 13, fontWeight: 700, color: accent }}>
                   {f.name[0].toUpperCase()}
                 </div>
-                <span style={{ fontSize: 13.5, color: 'var(--c-text)', fontWeight: 600 }}>{f.name}</span>
+                <span style={{ flex: 1, fontSize: 13.5, color: 'var(--c-text)', fontWeight: 600 }}>{f.name}</span>
+                <button onClick={() => onOpenDm && onOpenDm(f)} style={{
+                  all: 'unset', cursor: 'pointer', padding: '5px 10px', borderRadius: 8,
+                  background: `${accent}18`, border: `1px solid ${accent}44`,
+                  color: accent, fontSize: 12, fontWeight: 700,
+                }}>Chat</button>
               </div>
             ))}
           </div>
@@ -2684,7 +2713,7 @@ function FriendsSection({ accent, authToken, user }) {
   );
 }
 
-function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorChange, colorMode, onColorModeChange, onDeleteAccount, authToken }) {
+function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorChange, colorMode, onColorModeChange, onDeleteAccount, authToken, onOpenDm }) {
   const [deleteMode, setDeleteMode] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteError, setDeleteError] = useState('');
@@ -2790,7 +2819,7 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
       </div>
 
       {/* Friends */}
-      <FriendsSection accent={accent} authToken={authToken} user={user} />
+      <FriendsSection accent={accent} authToken={authToken} user={user} onOpenDm={onOpenDm} />
 
       {/* Feedback */}
       <div style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 18, padding: '16px 18px' }}>
@@ -2925,6 +2954,121 @@ const MSG_TYPES = {
   rescue:  { label: 'CG Alert',  color: '#F97316', icon: '🆘' },
 };
 
+function DirectMessageModal({ friend, authToken, user, profileColor, accent, onClose }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput]       = useState('');
+  const socketRef = useRef(null);
+  const listRef   = useRef(null);
+  const accentColor   = accent || '#22E3D0';
+  const myAvatarColor = profileColor || accentColor;
+
+  useEffect(() => {
+    const socket = socketIO(API, { auth: { token: authToken } });
+    socketRef.current = socket;
+    socket.on('connect', () => socket.emit('joinDm', { otherId: friend.id }));
+    socket.on('dmHistory', msgs => setMessages(msgs));
+    socket.on('dmMessage', msg  => setMessages(prev => [...prev, msg]));
+    return () => { socket.disconnect(); socketRef.current = null; };
+  }, [authToken, friend.id]);
+
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [messages.length]);
+
+  const canSend = input.trim().length > 0 && socketRef.current?.connected;
+
+  const send = useCallback(() => {
+    const text = input.trim();
+    if (!text || !socketRef.current?.connected) return;
+    socketRef.current.emit('dmMessage', { toUserId: friend.id, text });
+    setInput('');
+  }, [input, friend.id]);
+
+  const onKey = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
+  const friendInitial = (friend.name || '?')[0].toUpperCase();
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, background: 'var(--c-bg)', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
+      <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--c-border)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+        <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', width: 34, height: 34, borderRadius: 10, background: 'var(--c-surface-alt)', display: 'grid', placeItems: 'center' }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 5l-7 7 7 7"/>
+          </svg>
+        </button>
+        <div style={{ width: 36, height: 36, borderRadius: 99, background: `${accentColor}22`, border: `1.5px solid ${accentColor}44`, display: 'grid', placeItems: 'center', fontSize: 14, fontWeight: 700, color: accentColor, flexShrink: 0 }}>
+          {friendInitial}
+        </div>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--c-text)' }}>{friend.name}</div>
+          <div style={{ fontSize: 11.5, color: 'var(--c-text-4)' }}>Private message</div>
+        </div>
+      </div>
+
+      <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {messages.length === 0 && (
+          <div style={{ textAlign: 'center', color: 'var(--c-text-4)', fontSize: 13, paddingTop: 40 }}>
+            No messages yet — say hello to {friend.name}!
+          </div>
+        )}
+        {messages.map(msg => {
+          const isMe    = msg.fromUserId === user?.id;
+          const initial = (msg.fromName || '?')[0].toUpperCase();
+          return (
+            <div key={msg.id} style={{ display: 'flex', gap: 8, flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end' }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: 99, flexShrink: 0,
+                background: isMe ? myAvatarColor : `${accentColor}22`,
+                border: isMe ? 'none' : `1.5px solid ${accentColor}44`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 11, fontWeight: 800, color: isMe ? '#06151E' : accentColor,
+              }}>{initial}</div>
+              <div style={{ maxWidth: '72%', display: 'flex', flexDirection: 'column', gap: 2, alignItems: isMe ? 'flex-end' : 'flex-start' }}>
+                <div style={{
+                  padding: '8px 12px',
+                  borderRadius: isMe ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                  background: isMe ? `${accentColor}18` : 'var(--c-surface)',
+                  border: `1px solid ${isMe ? `${accentColor}44` : 'var(--c-border)'}`,
+                  fontSize: 14, color: 'var(--c-text)', lineHeight: 1.45, wordBreak: 'break-word',
+                }}>{msg.text}</div>
+                <div style={{ fontSize: 10, color: 'var(--c-text-5)', paddingInline: 4 }}>{_timeSince(msg.ts)}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ padding: '10px 12px 16px', borderTop: '1px solid var(--c-border)', flexShrink: 0, background: 'var(--c-bg)', display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+        <textarea
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={onKey}
+          placeholder={`Message ${friend.name}…`}
+          rows={1}
+          style={{
+            flex: 1, padding: '10px 14px', borderRadius: 14, resize: 'none',
+            border: '1px solid var(--c-border)',
+            background: 'var(--c-surface)', color: 'var(--c-text)', fontSize: 14,
+            outline: 'none', fontFamily: 'inherit', lineHeight: 1.4, maxHeight: 100, overflowY: 'auto',
+          }}
+        />
+        <button onClick={send} disabled={!canSend} style={{
+          all: 'unset', cursor: canSend ? 'pointer' : 'default',
+          width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+          background: canSend ? accentColor : 'var(--c-surface)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          transition: 'background 0.15s',
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+            stroke={canSend ? '#06151E' : 'var(--c-text-4)'}
+            strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M22 2 11 13M22 2 15 22l-4-9-9-4z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function _timeSince(ts) {
   const s = Math.floor((Date.now() - ts) / 1000);
   if (s < 60)   return 'just now';
@@ -2937,7 +3081,7 @@ function _distNmBetween(lat1, lon1, lat2, lon2) {
   return _haversineNm(lat1, lon1, lat2, lon2);
 }
 
-function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
+function ChatScreen({ accent, authToken, user, routeDep, onNewMessage, profileColor }) {
   const [messages, setMessages]   = useState([]);
   const [input, setInput]         = useState('');
   const [msgType, setMsgType]     = useState('general');
@@ -3032,6 +3176,7 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
   const onKey = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
 
   const accentColor = accent || '#22E3D0';
+  const myAvatarColor = profileColor || accentColor;
 
   return (
     <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 94, display: 'flex', flexDirection: 'column', background: 'var(--c-bg)' }}>
@@ -3098,7 +3243,7 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
               {isMe ? (
                 <div style={{
                   width: 30, height: 30, borderRadius: 99, flexShrink: 0,
-                  background: accentColor,
+                  background: myAvatarColor,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 12, fontWeight: 800, color: '#06151E',
                 }}>{initials}</div>
@@ -3352,6 +3497,7 @@ function App() {
   // ── App state ──
   const [tab, setTab] = useState('home');
   const [chatUnread, setChatUnread] = useState(0);
+  const [activeDm, setActiveDm] = useState(null); // { id, name } of friend
   const [boat, setBoat] = useState(null);
   const [boats, setBoats] = useState([]);
   const [presetBoats, setPresetBoats] = useState([]);
@@ -3689,6 +3835,7 @@ function App() {
                     user={user}
                     routeDep={route?.fromLat ? [parseFloat(route.fromLat), parseFloat(route.fromLon)] : null}
                     onNewMessage={() => setChatUnread(n => n + 1)}
+                    profileColor={profileColor}
                   />
                 </div>
               ) : (
@@ -3746,9 +3893,20 @@ function App() {
                       onColorModeChange={handleColorModeChange}
                       onDeleteAccount={deleteAccount}
                       authToken={authToken}
+                      onOpenDm={setActiveDm}
                     />
                   )}
                 </div>
+              )}
+              {activeDm && (
+                <DirectMessageModal
+                  friend={activeDm}
+                  authToken={authToken}
+                  user={user}
+                  profileColor={profileColor}
+                  accent={t.accent}
+                  onClose={() => setActiveDm(null)}
+                />
               )}
               <TabBar tab={tab} setTab={(id) => { setTab(id); if (id === 'chat') setChatUnread(0); }} accent={t.accent} chatUnread={chatUnread}/>
             </>
