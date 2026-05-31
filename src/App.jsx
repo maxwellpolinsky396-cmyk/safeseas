@@ -2988,7 +2988,7 @@ function DirectMessageModal({ friend, authToken, user, profileColor, accent, onC
   const friendInitial = (friend.name || '?')[0].toUpperCase();
 
   return (
-    <div style={{ position: 'absolute', inset: 0, background: 'var(--c-bg)', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
+    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 94, background: 'var(--c-bg)', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
       <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--c-border)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
         <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', width: 34, height: 34, borderRadius: 10, background: 'var(--c-surface-alt)', display: 'grid', placeItems: 'center' }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
