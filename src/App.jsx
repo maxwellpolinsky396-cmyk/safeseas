@@ -304,6 +304,78 @@ function _circleGeoJSON(lat, lon, radiusNm, steps = 72) {
   return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [pts] } };
 }
 
+async function _fetchNearbyPlaces(lat, lon, radiusM = 30000) {
+  const ar = `around:${radiusM},${lat},${lon}`;
+  const ar15 = `around:15000,${lat},${lon}`;
+  const query = `[out:json][timeout:20];(`+
+    `node["seamark:type"="fuel_station"](${ar});`+
+    `node["amenity"="fuel"]["boat"="yes"](${ar});`+
+    `node["fuel"="yes"]["leisure"="marina"](${ar});`+
+    `node["fuel:marine"="yes"](${ar});`+
+    `node["leisure"="slipway"](${ar});way["leisure"="slipway"](${ar});`+
+    `node["leisure"="marina"](${ar});way["leisure"="marina"](${ar});`+
+    `node["amenity"="harbour"](${ar});way["amenity"="harbour"](${ar});`+
+    `node["seamark:type"~"^(rock|wreck|obstruction|shoal)$"](${ar15});`+
+    `node["natural"="reef"](${ar15});`+
+    `way["bridge"="yes"]["maxheight"](${ar});`+
+    `way["man_made"="bridge"]["maxheight"](${ar});`+
+  `);out center;`;
+  try {
+    const res = await fetch('https://overpass-api.de/api/interpreter', {
+      method:'POST', body:`data=${encodeURIComponent(query)}`,
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      signal: AbortSignal.timeout(22000),
+    });
+    if (!res.ok) return { fuel:[], ramps:[], hazards:[], bridges:[] };
+    const data = await res.json();
+    const fuel=[], ramps=[], hazards=[], bridges=[];
+    for (const el of data.elements||[]) {
+      const lat2 = el.lat??el.center?.lat, lon2 = el.lon??el.center?.lon;
+      if (lat2==null) continue;
+      const name = el.tags?.name||el.tags?.['name:en']||null;
+      const dist = _haversineNm(lat,lon,lat2,lon2);
+      const t = el.tags||{};
+      if (t.seamark_type==='fuel_station'||t['seamark:type']==='fuel_station'||t.amenity==='fuel'||t.fuel==='yes'||t['fuel:marine']==='yes') {
+        fuel.push({ name:name||'Fuel Dock', lat:lat2, lon:lon2, dist });
+      } else if (t.leisure==='slipway') {
+        ramps.push({ name:name||'Boat Ramp', lat:lat2, lon:lon2, dist, isRamp:true });
+      } else if (t.leisure==='marina'||t.amenity==='harbour') {
+        ramps.push({ name:name||'Marina', lat:lat2, lon:lon2, dist, isRamp:false });
+      } else if (['rock','wreck','obstruction','shoal'].includes(t['seamark:type'])||t.natural==='reef') {
+        hazards.push({ name:name||t['seamark:type']||'Hazard', lat:lat2, lon:lon2, dist, type:t['seamark:type']||'hazard' });
+      } else if (t.bridge==='yes'||t.man_made==='bridge') {
+        const clr = t.maxheight||t['seamark:bridge_clearance:water_level']||null;
+        if (clr) bridges.push({ name:name||'Bridge', lat:lat2, lon:lon2, dist, clearance:clr });
+      }
+    }
+    const byDist = (a,b)=>a.dist-b.dist;
+    return {
+      fuel:fuel.sort(byDist).slice(0,6),
+      ramps:ramps.sort(byDist).slice(0,6),
+      hazards:hazards.sort(byDist).slice(0,8),
+      bridges:bridges.sort(byDist).slice(0,5),
+    };
+  } catch { return { fuel:[], ramps:[], hazards:[], bridges:[] }; }
+}
+
+async function _fetchAlerts(lat, lon) {
+  try {
+    const res = await fetch(`https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`, {
+      headers: { 'User-Agent':'SafeSeas/1.0', Accept:'application/geo+json' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.features||[]).map(f=>({
+      id: f.id||Math.random().toString(36).slice(2),
+      event: f.properties.event||'Alert',
+      severity: f.properties.severity||'Unknown',
+      headline: f.properties.headline||f.properties.event||'Weather alert',
+      expires: f.properties.expires,
+    })).slice(0,4);
+  } catch { return []; }
+}
+
 async function _fetchSeamarks(minLat, minLon, maxLat, maxLon, signal) {
   const bbox = `${minLat},${minLon},${maxLat},${maxLon}`;
   const query = `[out:json][timeout:15];(`+
@@ -313,33 +385,40 @@ async function _fetchSeamarks(minLat, minLon, maxLat, maxLon, signal) {
     `node["seamark:type"="obstruction"](${bbox});`+
     `node["seamark:type"="shoal"](${bbox});`+
     `node["natural"="reef"](${bbox});`+
-  `);out body;`;
+    `way["man_made"="bridge"]["maxheight"](${bbox});`+
+    `way["bridge"="yes"]["maxheight"](${bbox});`+
+  `);out center;`;
   const res = await fetch('https://overpass-api.de/api/interpreter', {
     method: 'POST',
     body: `data=${encodeURIComponent(query)}`,
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     signal,
   });
-  if (!res.ok) return { buoys: [], hazards: [] };
+  if (!res.ok) return { buoys: [], hazards: [], bridges: [] };
   const data = await res.json();
-  const buoys = [], hazards = [];
+  const buoys = [], hazards = [], bridges = [];
   for (const el of data.elements || []) {
-    if (el.lat == null) continue;
+    const elLat = el.lat ?? el.center?.lat;
+    const elLon = el.lon ?? el.center?.lon;
+    if (elLat == null) continue;
     const t = el.tags?.['seamark:type'];
-    if (t === 'buoy_lateral') {
+    if (el.tags?.man_made === 'bridge' || el.tags?.bridge === 'yes') {
+      const clr = el.tags?.maxheight || el.tags?.['seamark:bridge_clearance:water_level'] || null;
+      if (clr) bridges.push({ lat: elLat, lon: elLon, clearance: clr, name: el.tags?.name || 'Bridge' });
+    } else if (t === 'buoy_lateral') {
       const ref = el.tags?.['seamark:buoy_lateral:ref'] || el.tags?.ref || '';
       const colour = el.tags?.['seamark:buoy_lateral:colour'] || '';
-      buoys.push({ lat: el.lat, lon: el.lon, ref, isRed: colour.includes('red'), isGreen: colour.includes('green') });
+      buoys.push({ lat: elLat, lon: elLon, ref, isRed: colour.includes('red'), isGreen: colour.includes('green') });
     } else {
-      hazards.push({ lat: el.lat, lon: el.lon, type: t || el.tags?.natural || 'hazard', name: el.tags?.name || el.tags?.['seamark:name'] || t || 'Hazard' });
+      hazards.push({ lat: elLat, lon: elLon, type: t || el.tags?.natural || 'hazard', name: el.tags?.name || el.tags?.['seamark:name'] || t || 'Hazard' });
     }
   }
-  return { buoys, hazards };
+  return { buoys, hazards, bridges };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat, fuelLevel }) {
+function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat, fuelLevel, onReportHazard }) {
   const mapRef = useRef(null);
   const [userPos, setUserPos] = useState(null); // { lat, lng, acc, heading, speedKts }
   const [tracking, setTracking] = useState(false);
@@ -352,7 +431,7 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
   const [selectedVessel, setSelectedVessel] = useState(null);
   const [mapClick, setMapClick] = useState(null);
   const [pinBusy, setPinBusy] = useState(false);
-  const [seamarks, setSeamarks] = useState({ buoys: [], hazards: [] });
+  const [seamarks, setSeamarks] = useState({ buoys: [], hazards: [], bridges: [] });
   const watchRef = useRef(null);
   const wsRef = useRef(null);
   const headingHistory = useRef([]);
@@ -417,7 +496,7 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
   // Fetch buoys + hazards along the route
   useEffect(() => {
     const wpts = route?.waypoints;
-    if (!wpts || wpts.length < 2) { setSeamarks({ buoys: [], hazards: [] }); return; }
+    if (!wpts || wpts.length < 2) { setSeamarks({ buoys: [], hazards: [], bridges: [] }); return; }
     const ctrl = new AbortController();
     const margin = 0.04;
     const lats = wpts.map(([la]) => la), lons = wpts.map(([, lo]) => lo);
@@ -607,6 +686,19 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
           );
         })}
 
+        {/* Bridge clearance markers */}
+        {seamarks.bridges?.map((b, i) => b.lat && (
+          <Marker key={`br-${i}`} longitude={b.lon} latitude={b.lat} anchor="center">
+            <div title={`${b.name} — ${b.clearance} clearance`} style={{
+              background:'#1D4ED8', color:'white', borderRadius:6,
+              padding:'2px 5px', fontSize:9, fontWeight:800,
+              border:'1.5px solid rgba(147,197,253,0.5)',
+              boxShadow:'0 1px 4px rgba(0,0,0,0.6)', cursor:'default',
+              whiteSpace:'nowrap',
+            }}>{b.clearance}</div>
+          </Marker>
+        ))}
+
         {/* Departure dot */}
         {depCoords && (
           <Marker longitude={depCoords[1]} latitude={depCoords[0]} anchor="center">
@@ -710,6 +802,21 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
               {label}
             </button>
           ))}
+          {onReportHazard && (
+            <button onClick={() => { onReportHazard(mapClick.lat, mapClick.lon); setMapClick(null); }} style={{
+              all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10,
+              padding: '9px 12px', borderRadius: 10,
+              background: 'transparent',
+              color: '#FF8080', fontSize: 13.5, fontWeight: 600,
+              transition: 'background 0.12s',
+            }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(122,31,31,0.35)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              <span style={{ fontSize: 16, lineHeight: 1 }}>⚠</span>
+              Report Hazard Here
+            </button>
+          )}
           <div style={{ height: 1, background: 'var(--c-border)', margin: '2px 4px' }}/>
           <button onClick={() => setMapClick(null)} style={{
             all: 'unset', cursor: 'pointer', padding: '7px 12px', borderRadius: 10,
@@ -1447,6 +1554,18 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
   const [fromActiveIndex, setFromActiveIndex] = useState(-1);
   const [toActiveIndex, setToActiveIndex] = useState(-1);
   const fetchTimer = useRef(null);
+  const [nearby, setNearby] = useState({ fuel:[], ramps:[], hazards:[], bridges:[] });
+  const [alerts, setAlerts] = useState([]);
+  const [nearbyLoaded, setNearbyLoaded] = useState(false);
+
+  useEffect(() => {
+    const lat = parseFloat(route?.fromLat) || 27.4976;
+    const lon = parseFloat(route?.fromLon) || -82.7196;
+    if (nearbyLoaded) return;
+    setNearbyLoaded(true);
+    _fetchNearbyPlaces(lat, lon).then(setNearby).catch(()=>{});
+    _fetchAlerts(lat, lon).then(setAlerts).catch(()=>{});
+  }, [route?.fromLat, route?.fromLon]);
 
   const fetchSuggestions = async (q, which) => {
     if (!q || q.length < 2) {
@@ -1647,6 +1766,119 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
           </div>
         </Card>
       </div>
+
+      {/* Alerts */}
+      {alerts.length > 0 && (
+        <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+          <div style={{ fontSize:11, color:'var(--c-text-3)', fontWeight:600, letterSpacing:'0.1em', textTransform:'uppercase' }}>
+            {alerts.length} Active Alert{alerts.length>1?'s':''}
+          </div>
+          {alerts.map(a => {
+            const isSerious = ['Extreme','Severe'].includes(a.severity);
+            return (
+              <div key={a.id} style={{
+                display:'flex', alignItems:'flex-start', gap:10, padding:'10px 14px',
+                background: isSerious ? 'rgba(220,38,38,0.1)' : 'rgba(245,158,11,0.1)',
+                border:`1px solid ${isSerious ? '#7A2530' : '#78490A'}`,
+                borderRadius:12,
+              }}>
+                <span style={{ fontSize:16, flexShrink:0, marginTop:1 }}>{isSerious ? '🚨' : '⚠️'}</span>
+                <div>
+                  <div style={{ fontSize:12.5, color:'var(--c-text)', fontWeight:700 }}>{a.event}</div>
+                  <div style={{ fontSize:11.5, color:'var(--c-text-3)', marginTop:2, lineHeight:1.4 }}>{a.headline}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Fuel gauge */}
+      {boat?.fuelCap > 0 && (() => {
+        const storedLevel = boat?.id ? parseFloat(localStorage.getItem(`safeseas_fuel_${boat.id}`))||0 : 0;
+        const fuelLev = storedLevel > 0 ? storedLevel : (boat?.fuelLevel||0);
+        const pct = Math.min(1, fuelLev / boat.fuelCap);
+        const barColor = pct > 0.5 ? '#22C55E' : pct > 0.25 ? '#F59E0B' : '#EF4444';
+        const rangeNm = (boat.fuelBurn>0 && boat.cruiseSpeed>0 && fuelLev>0)
+          ? ((fuelLev/boat.fuelBurn)*boat.cruiseSpeed).toFixed(0)+' nm range'
+          : null;
+        return (
+          <div style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px',
+            background:'var(--c-surface)', border:'1px solid var(--c-border)', borderRadius:14 }}>
+            <span style={{ fontSize:18 }}>⛽</span>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:5 }}>
+                <span style={{ fontSize:11, fontWeight:600, color:'var(--c-text-3)', letterSpacing:'0.08em', textTransform:'uppercase' }}>Fuel</span>
+                <span style={{ fontSize:12, fontWeight:700, color:'var(--c-text-2)' }}>
+                  {fuelLev.toFixed(1)} / {boat.fuelCap} gal {rangeNm ? `· ${rangeNm}` : ''}
+                </span>
+              </div>
+              <div style={{ height:6, borderRadius:99, background:'var(--c-surface-alt)', overflow:'hidden' }}>
+                <div style={{ width:`${pct*100}%`, height:'100%', background:barColor, borderRadius:99 }}/>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Nearby: Fuel Docks */}
+      {nearby.fuel.length > 0 && (
+        <div>
+          <div style={{ fontSize:11, color:'var(--c-text-3)', fontWeight:600, letterSpacing:'0.1em', textTransform:'uppercase', marginBottom:8 }}>⛽ Fuel Docks Nearby</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            {nearby.fuel.map((f,i) => (
+              <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px',
+                background:'var(--c-surface)', border:'1px solid var(--c-border)', borderRadius:12 }}>
+                <div style={{ width:32, height:32, borderRadius:99, background:'#16351D', display:'grid', placeItems:'center', flexShrink:0, fontSize:15 }}>⛽</div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, color:'var(--c-text)', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{f.name}</div>
+                </div>
+                <span style={{ fontSize:12, color:'var(--c-text-3)', fontWeight:600, flexShrink:0 }}>{f.dist.toFixed(1)} nm</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Nearby: Ramps & Marinas */}
+      {nearby.ramps.length > 0 && (
+        <div>
+          <div style={{ fontSize:11, color:'var(--c-text-3)', fontWeight:600, letterSpacing:'0.1em', textTransform:'uppercase', marginBottom:8 }}>⚓ Ramps & Marinas Nearby</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            {nearby.ramps.map((r,i) => (
+              <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px',
+                background:'var(--c-surface)', border:'1px solid var(--c-border)', borderRadius:12 }}>
+                <div style={{ width:32, height:32, borderRadius:99, background:'#0E2238', display:'grid', placeItems:'center', flexShrink:0, fontSize:15 }}>{r.isRamp?'🚤':'⚓'}</div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, color:'var(--c-text)', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{r.name}</div>
+                  <div style={{ fontSize:11, color:'var(--c-text-4)', marginTop:1 }}>{r.isRamp?'Boat Ramp':'Marina'}</div>
+                </div>
+                <span style={{ fontSize:12, color:'var(--c-text-3)', fontWeight:600, flexShrink:0 }}>{r.dist.toFixed(1)} nm</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Nearby: Hazards */}
+      {nearby.hazards.length > 0 && (
+        <div>
+          <div style={{ fontSize:11, color:'var(--c-text-3)', fontWeight:600, letterSpacing:'0.1em', textTransform:'uppercase', marginBottom:8 }}>⚠️ Hazards Nearby</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+            {nearby.hazards.map((h,i) => (
+              <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px',
+                background:'rgba(220,38,38,0.07)', border:'1px solid #7A2530', borderRadius:12 }}>
+                <div style={{ width:32, height:32, borderRadius:6, background:'#DC2626', display:'grid', placeItems:'center', flexShrink:0, fontSize:13 }}>⚠</div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, color:'var(--c-text)', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{h.name}</div>
+                  <div style={{ fontSize:11, color:'#FF6B6B', marginTop:1, textTransform:'capitalize' }}>{h.type.replace(/_/g,' ')}</div>
+                </div>
+                <span style={{ fontSize:12, color:'#FF6B6B', fontWeight:600, flexShrink:0 }}>{h.dist.toFixed(1)} nm</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <button onClick={() => onPlan({ from, to })} style={{
         all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
@@ -2245,7 +2477,187 @@ function Field({ label, value, onChange, placeholder, numeric }) {
 // ─────────────────────────────────────────────────────────────
 const PROFILE_COLORS = ['#22E3D0', '#38BDF8', '#818CF8', '#F472B6', '#FB923C', '#4ADE80', '#FACC15', '#F87171'];
 
-function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorChange, colorMode, onColorModeChange, onDeleteAccount }) {
+function FriendsSection({ accent, authToken, user }) {
+  const [friends, setFriends] = useState({ friends: [], incoming: [], outgoing: [] });
+  const [searchQ, setSearchQ] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const searchTimer = useRef(null);
+
+  const authHeaders = authToken ? { Authorization: `Bearer ${authToken}` } : {};
+
+  const loadFriends = async () => {
+    try {
+      const res = await fetch(`${API}/api/friends`, { headers: authHeaders });
+      if (res.ok) setFriends(await res.json());
+    } catch {}
+  };
+
+  useEffect(() => { loadFriends(); }, []);
+
+  const handleSearchChange = (q) => {
+    setSearchQ(q);
+    clearTimeout(searchTimer.current);
+    if (q.trim().length < 2) { setSearchResults([]); return; }
+    setSearching(true);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API}/api/users/search?q=${encodeURIComponent(q)}`, { headers: authHeaders });
+        if (res.ok) setSearchResults(await res.json());
+      } catch {}
+      setSearching(false);
+    }, 350);
+  };
+
+  const sendRequest = async (toUserId) => {
+    try {
+      await fetch(`${API}/api/friends/request`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toUserId }),
+      });
+      setSearchResults(r => r.filter(u => u.id !== toUserId));
+      loadFriends();
+    } catch {}
+  };
+
+  const respond = async (requestId, action) => {
+    try {
+      await fetch(`${API}/api/friends/respond`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId, action }),
+      });
+      loadFriends();
+    } catch {}
+  };
+
+  const outgoingIds = new Set(friends.outgoing.map(r => r.id));
+  const friendIds = new Set(friends.friends.map(r => r.id));
+  const incomingIds = new Set(friends.incoming.map(r => r.id));
+
+  return (
+    <div style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 18, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Friends</div>
+
+      {/* Incoming requests */}
+      {friends.incoming.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11.5, color: 'var(--c-text-3)', fontWeight: 600, marginBottom: 8 }}>Friend Requests</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {friends.incoming.map(r => (
+              <div key={r.requestId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0' }}>
+                <div style={{ width: 32, height: 32, borderRadius: 99, background: accent + '33', display: 'grid', placeItems: 'center', flexShrink: 0, fontSize: 13, fontWeight: 700, color: accent }}>
+                  {r.name[0].toUpperCase()}
+                </div>
+                <span style={{ flex: 1, fontSize: 13.5, color: 'var(--c-text)', fontWeight: 600 }}>{r.name}</span>
+                <button onClick={() => respond(r.requestId, 'accept')} style={{
+                  all: 'unset', cursor: 'pointer', padding: '5px 10px', borderRadius: 8,
+                  background: accent, color: '#06151E', fontSize: 12, fontWeight: 700,
+                }}>Accept</button>
+                <button onClick={() => respond(r.requestId, 'decline')} style={{
+                  all: 'unset', cursor: 'pointer', padding: '5px 10px', borderRadius: 8,
+                  background: 'var(--c-surface-alt)', border: '1px solid var(--c-border)',
+                  color: 'var(--c-text-3)', fontSize: 12, fontWeight: 600,
+                }}>Decline</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Search */}
+      <div>
+        <div style={{ fontSize: 11.5, color: 'var(--c-text-3)', fontWeight: 600, marginBottom: 8 }}>Add Friend</div>
+        <input
+          type="text"
+          value={searchQ}
+          onChange={e => handleSearchChange(e.target.value)}
+          placeholder="Search by name…"
+          style={{
+            width: '100%', boxSizing: 'border-box',
+            background: 'var(--c-surface-alt)', border: '1px solid var(--c-border)',
+            borderRadius: 10, padding: '9px 12px',
+            color: 'var(--c-text)', fontSize: 14, outline: 'none', fontFamily: 'inherit',
+          }}
+        />
+        {searching && <div style={{ fontSize: 12, color: 'var(--c-text-4)', marginTop: 6 }}>Searching…</div>}
+        {searchResults.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+            {searchResults.map(u => {
+              const isFriend = friendIds.has(u.id);
+              const isPending = outgoingIds.has(u.id) || incomingIds.has(u.id);
+              return (
+                <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 99, background: 'var(--c-surface-alt)', display: 'grid', placeItems: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: 'var(--c-text-3)' }}>
+                    {u.name[0].toUpperCase()}
+                  </div>
+                  <span style={{ flex: 1, fontSize: 13.5, color: 'var(--c-text)', fontWeight: 600 }}>{u.name}</span>
+                  {isFriend ? (
+                    <span style={{ fontSize: 11.5, color: '#22C55E', fontWeight: 600 }}>Friends</span>
+                  ) : isPending ? (
+                    <span style={{ fontSize: 11.5, color: 'var(--c-text-4)', fontWeight: 600 }}>Pending</span>
+                  ) : (
+                    <button onClick={() => sendRequest(u.id)} style={{
+                      all: 'unset', cursor: 'pointer', padding: '5px 10px', borderRadius: 8,
+                      background: accent + '22', border: `1px solid ${accent}55`,
+                      color: accent, fontSize: 12, fontWeight: 700,
+                    }}>Add</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Friend list */}
+      {friends.friends.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11.5, color: 'var(--c-text-3)', fontWeight: 600, marginBottom: 8 }}>
+            {friends.friends.length} Friend{friends.friends.length !== 1 ? 's' : ''}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {friends.friends.map(f => (
+              <div key={f.requestId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+                <div style={{ width: 32, height: 32, borderRadius: 99, background: accent + '33', display: 'grid', placeItems: 'center', flexShrink: 0, fontSize: 13, fontWeight: 700, color: accent }}>
+                  {f.name[0].toUpperCase()}
+                </div>
+                <span style={{ fontSize: 13.5, color: 'var(--c-text)', fontWeight: 600 }}>{f.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Outgoing */}
+      {friends.outgoing.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11.5, color: 'var(--c-text-3)', fontWeight: 600, marginBottom: 6 }}>Sent Requests</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {friends.outgoing.map(r => (
+              <div key={r.requestId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
+                <div style={{ width: 28, height: 28, borderRadius: 99, background: 'var(--c-surface-alt)', display: 'grid', placeItems: 'center', flexShrink: 0, fontSize: 11, fontWeight: 700, color: 'var(--c-text-4)' }}>
+                  {r.name[0].toUpperCase()}
+                </div>
+                <span style={{ flex: 1, fontSize: 13, color: 'var(--c-text-3)', fontWeight: 600 }}>{r.name}</span>
+                <span style={{ fontSize: 11, color: 'var(--c-text-4)' }}>Awaiting reply</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {friends.friends.length === 0 && friends.incoming.length === 0 && (
+        <div style={{ fontSize: 13, color: 'var(--c-text-4)', textAlign: 'center', padding: '8px 0' }}>
+          No friends yet — search above to add some.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorChange, colorMode, onColorModeChange, onDeleteAccount, authToken }) {
   const [deleteMode, setDeleteMode] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteError, setDeleteError] = useState('');
@@ -2349,6 +2761,9 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
           </button>
         </div>
       </div>
+
+      {/* Friends */}
+      <FriendsSection accent={accent} authToken={authToken} user={user} />
 
       {/* Feedback */}
       <div style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 18, padding: '16px 18px' }}>
@@ -3166,6 +3581,7 @@ function App() {
                       colorMode={colorMode}
                       onColorModeChange={handleColorModeChange}
                       onDeleteAccount={deleteAccount}
+                      authToken={authToken}
                     />
                   )}
                 </div>

@@ -150,6 +150,49 @@ function jsonStore() {
       write(data);
     },
 
+    // ── Friends ──
+    searchUsers: async (q, excludeId) => {
+      const data = read();
+      const qLower = q.toLowerCase();
+      return (data.users||[])
+        .filter(u => u.id !== excludeId && u.name.toLowerCase().includes(qLower))
+        .slice(0,8)
+        .map(u => ({ id:u.id, name:u.name }));
+    },
+    sendFriendRequest: async (fromId, toId) => {
+      const data = read();
+      if (!data.friendRequests) data.friendRequests = [];
+      const existing = data.friendRequests.find(r =>
+        ((r.fromId===fromId && r.toId===toId)||(r.fromId===toId && r.toId===fromId)) && r.status!=='declined'
+      );
+      if (existing) throw new Error('Friend request already exists');
+      const id = (data.friendRequests.reduce((m,r)=>Math.max(m,r.id||0),0))+1;
+      data.friendRequests.push({ id, fromId, toId, status:'pending', ts:Date.now() });
+      write(data);
+      return id;
+    },
+    respondFriendRequest: async (requestId, userId, action) => {
+      const data = read();
+      const req = (data.friendRequests||[]).find(r=>r.id===requestId && r.toId===userId);
+      if (!req) throw new Error('Request not found');
+      req.status = action==='accept' ? 'accepted' : 'declined';
+      write(data);
+    },
+    getFriends: async (userId) => {
+      const data = read();
+      const reqs = data.friendRequests||[];
+      const users = data.users||[];
+      const resolve = id => { const u=users.find(u=>u.id===id); return u?{id:u.id,name:u.name}:{id,name:'Unknown'}; };
+      return {
+        friends: reqs.filter(r=>r.status==='accepted'&&(r.fromId===userId||r.toId===userId))
+          .map(r=>({ requestId:r.id, ...resolve(r.fromId===userId?r.toId:r.fromId) })),
+        incoming: reqs.filter(r=>r.toId===userId&&r.status==='pending')
+          .map(r=>({ requestId:r.id, ...resolve(r.fromId) })),
+        outgoing: reqs.filter(r=>r.fromId===userId&&r.status==='pending')
+          .map(r=>({ requestId:r.id, ...resolve(r.toId) })),
+      };
+    },
+
     // ── Trips (per-user) ──
 
     getTrips: async (userId) => {
@@ -299,6 +342,24 @@ async function tryMySQL() {
       await conn.query('DELETE FROM user_boats WHERE id = ? AND user_id = ?', [boatId, userId]);
     },
 
+    // ── Friends (MySQL stubs — JSON store is primary) ──
+    searchUsers: async (q, excludeId) => {
+      const [rows] = await conn.query(
+        'SELECT id, name FROM users WHERE id != ? AND name LIKE ? LIMIT 8',
+        [excludeId, `%${q}%`]
+      );
+      return rows;
+    },
+    sendFriendRequest: async (fromId, toId) => {
+      throw new Error('Not implemented for MySQL');
+    },
+    respondFriendRequest: async (requestId, userId, action) => {
+      throw new Error('Not implemented for MySQL');
+    },
+    getFriends: async (userId) => {
+      return { friends: [], incoming: [], outgoing: [] };
+    },
+
     getTrips: async (userId) => {
       const [rows] = await conn.query(
         'SELECT * FROM trips WHERE user_id = ? ORDER BY id DESC',
@@ -372,4 +433,8 @@ module.exports = {
   loginUser: async (email, password) => (await init()).loginUser(email, password),
   getUserByToken: async (token) => (await init()).getUserByToken(token),
   logoutUser: async (token) => (await init()).logoutUser(token),
+  searchUsers: async (q, excludeId) => (await init()).searchUsers(q, excludeId),
+  sendFriendRequest: async (fromId, toId) => (await init()).sendFriendRequest(fromId, toId),
+  respondFriendRequest: async (requestId, userId, action) => (await init()).respondFriendRequest(requestId, userId, action),
+  getFriends: async (userId) => (await init()).getFriends(userId),
 };

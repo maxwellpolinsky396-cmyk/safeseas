@@ -340,6 +340,54 @@ app.post('/api/feedback', requireAuth, async (req, res) => {
   }
 });
 
+// ── Friends ──────────────────────────────────────────────────────────────────
+app.get('/api/users/search', requireAuth, async (req, res) => {
+  try {
+    const q = req.query.q || '';
+    if (q.trim().length < 2) return res.json([]);
+    const results = await db.searchUsers(q, req.user.id);
+    res.json(results);
+  } catch (err) {
+    console.error('search-users error', err);
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+app.get('/api/friends', requireAuth, async (req, res) => {
+  try {
+    const data = await db.getFriends(req.user.id);
+    res.json(data);
+  } catch (err) {
+    console.error('get-friends error', err);
+    res.status(500).json({ error: 'Failed to load friends' });
+  }
+});
+
+app.post('/api/friends/request', requireAuth, async (req, res) => {
+  try {
+    const { toUserId } = req.body;
+    if (!toUserId) return res.status(400).json({ error: 'toUserId required' });
+    const id = await db.sendFriendRequest(req.user.id, Number(toUserId));
+    res.status(201).json({ id });
+  } catch (err) {
+    if (err.message === 'Friend request already exists') return res.status(409).json({ error: err.message });
+    console.error('friend-request error', err);
+    res.status(500).json({ error: 'Failed to send request' });
+  }
+});
+
+app.post('/api/friends/respond', requireAuth, async (req, res) => {
+  try {
+    const { requestId, action } = req.body;
+    if (!['accept','decline'].includes(action)) return res.status(400).json({ error: 'action must be accept or decline' });
+    await db.respondFriendRequest(Number(requestId), req.user.id, action);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('friend-respond error', err);
+    res.status(500).json({ error: 'Failed to respond to request' });
+  }
+});
+
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 4000;
