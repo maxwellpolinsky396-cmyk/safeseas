@@ -290,9 +290,12 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
 
   let waypoints = _simplify(path.map(k => k.split(',').map(Number)), 0.002, localPolys);
 
-  // Replace grid endpoints with exact coords only when they're actually in water
-  if (_isWaterLocal(fromLat, fromLon, localPolys)) waypoints[0] = [fromLat, fromLon];
-  if (_isWaterLocal(toLat, toLon, localPolys))     waypoints[waypoints.length - 1] = [toLat, toLon];
+  // Always anchor endpoints to exact user-specified coords.
+  // The A* inner path is all water; the short first/last segments may briefly
+  // cross the marina shoreline polygon, but visually this is correct — the
+  // route line starts and ends exactly where the user placed their pins.
+  waypoints[0] = [fromLat, fromLon];
+  waypoints[waypoints.length - 1] = [toLat, toLon];
 
   console.log(`Route: ${waypoints.length} waypoints`);
   return waypoints;
