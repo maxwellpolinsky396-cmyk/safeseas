@@ -4,19 +4,37 @@ const fs   = require('fs');
 const booleanPointInPolygon = require('@turf/boolean-point-in-polygon').default;
 const { point: turfPoint }  = require('@turf/helpers');
 
-// ─── Ocean polygon (Natural Earth 10m) ───────────────────────────────────────
+// ─── Ocean polygons ───────────────────────────────────────────────────────────
+// 10m (detailed): correct barrier islands; used for segment validation only.
+// 50m (coarse): barrier islands vanish → ICW / sounds appear as water.
+// Routing grid uses UNION so A* can thread inshore waterways.
 
-let _oceanFeature = null;
-function _loadOcean() {
-  if (_oceanFeature) return _oceanFeature;
-  const file = path.join(__dirname, '../data/ne_10m_ocean.geojson');
-  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-  _oceanFeature = data.features[0];
-  return _oceanFeature;
+let _ocean10 = null, _ocean50 = null;
+
+function _loadOcean10() {
+  if (_ocean10) return _ocean10;
+  _ocean10 = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/ne_10m_ocean.geojson'), 'utf8')).features[0];
+  return _ocean10;
+}
+function _loadOcean50() {
+  if (_ocean50) return _ocean50;
+  _ocean50 = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/ne_50m_ocean.geojson'), 'utf8')).features[0];
+  return _ocean50;
 }
 
+// Strict — 10m only. Used for segment validation so simplification never
+// collapses a chord across an actual barrier island.
 function _isWater(lat, lon) {
-  return booleanPointInPolygon(turfPoint([lon, lat]), _loadOcean());
+  return booleanPointInPolygon(turfPoint([lon, lat]), _loadOcean10());
+}
+
+// Permissive — union of 10m + 50m. Used for A* grid classification and
+// endpoint attachment. At 50m scale barrier islands disappear, so the ICW,
+// Nassau Sound, Cumberland Sound, etc. all open up as water cells.
+function _isRoutingWater(lat, lon) {
+  const pt = turfPoint([lon, lat]);
+  return booleanPointInPolygon(pt, _loadOcean10()) ||
+         booleanPointInPolygon(pt, _loadOcean50());
 }
 
 // ─── Overpass marina/dock snap ────────────────────────────────────────────────
@@ -60,21 +78,7 @@ async function _snapToMarina(lat, lon, radiusM = 25000) {
   }
 }
 
-// ─── OpenTopoData helpers ─────────────────────────────────────────────────────
 
-// GEBCO 2020 — 15 arc-sec (~460 m). Negative elevation = navigable water.
-async function _gebco(points) {
-  if (!points.length) return [];
-  const locs = points.map(p => `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`).join('|');
-  try {
-    const res = await _fetch(`https://api.opentopodata.org/v1/gebco2020?locations=${locs}`,
-      { headers: { 'User-Agent': 'SafeSeas/1.0' }, signal: AbortSignal.timeout(15000) });
-    if (!res.ok) return points.map(() => -10);
-    const data = await res.json();
-    if (data.status !== 'OK') return points.map(() => -10);
-    return (data.results || []).map(r => (typeof r.elevation === 'number' ? r.elevation : -10));
-  } catch { return points.map(() => -10); }
-}
 
 
 // ─── Min-heap ─────────────────────────────────────────────────────────────────
@@ -272,30 +276,17 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
   for (const lat of lats) for (const lon of lons) grid.push({ lat, lon });
   console.log(`A* grid: ${grid.length} pts (${lats.length}×${lons.length}) step=${stepDeg}° dist=${distKm.toFixed(0)}km margin=${margin}°`);
 
-  // Classify grid cells using the Natural Earth 10m ocean polygon.
-  // This is authoritative: barrier islands (Cumberland, Jekyll, Amelia, etc.) are land
-  // in the polygon; Atlantic, sounds, and bays are water. No elevation API ambiguity.
-  // GEBCO is still used for depth-weighting inside A* (prefer deeper cells).
+  // Classify grid cells using UNION of 10m + 50m ocean polygons (offline, instant).
+  // At 50m scale barrier islands vanish, so ICW channels, Nassau Sound, Cumberland
+  // Sound, etc. all open up as water cells — fixing the "no path" failures that the
+  // 10m-only approach produced for inshore coastal routes.
+  // _checkSegment still uses the strict 10m polygon so simplification never collapses
+  // a chord that crosses an actual island.
   const waterCells = new Map();
-  const gebcoFull  = new Map();
-
-  // First pass: mark ocean cells via polygon (instant, offline).
-  const oceanGrid = grid.filter(p => _isWater(p.lat, p.lon));
-  console.log(`Ocean polygon: ${oceanGrid.length}/${grid.length} cells are water`);
-
-  // Second pass: fetch GEBCO depth only for water cells (smaller batch set).
-  const BATCH = 100;
-  for (let i = 0; i < oceanGrid.length; i += BATCH) {
-    const batch = oceanGrid.slice(i, i + BATCH);
-    const elevs = await _gebco(batch);
-    for (let j = 0; j < batch.length; j++) {
-      const key = `${batch[j].lat},${batch[j].lon}`;
-      const depth = elevs[j] < 0 ? elevs[j] : -1; // treat near-zero as shallow water
-      waterCells.set(key, depth);
-      gebcoFull.set(key, depth);
-    }
-    if (i + BATCH < oceanGrid.length) await new Promise(r => setTimeout(r, 1150));
+  for (const p of grid) {
+    if (_isRoutingWater(p.lat, p.lon)) waterCells.set(`${p.lat},${p.lon}`, -10);
   }
+  console.log(`Water cells (10m∪50m): ${waterCells.size}/${grid.length}`);
 
   const nearKey = (lat, lon) => {
     const nL = lats.reduce((a, b) => Math.abs(a - lat) < Math.abs(b - lat) ? a : b);
@@ -330,8 +321,8 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
   // Only replace endpoints with exact coords when they're actually in water.
   // If the exact point is on land (e.g. marina building misclassified by polygon,
   // or geocoded coords are inland), keep the nearest A* water cell instead.
-  if (_isWater(fromLat, fromLon)) waypoints[0] = [fromLat, fromLon];
-  if (_isWater(toLat, toLon))     waypoints[waypoints.length - 1] = [toLat, toLon];
+  if (_isRoutingWater(fromLat, fromLon)) waypoints[0] = [fromLat, fromLon];
+  if (_isRoutingWater(toLat, toLon))     waypoints[waypoints.length - 1] = [toLat, toLon];
 
   console.log(`Final route: ${waypoints.length} waypoints`);
   return waypoints;

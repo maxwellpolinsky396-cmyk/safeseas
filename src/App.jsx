@@ -282,9 +282,62 @@ function _compassDir(deg) {
 function _navZoom(kts) {
   if (kts < 2) return 15; if (kts < 6) return 13.5; if (kts < 12) return 12.5; return 11.5;
 }
+
+function _routeDistNm(waypoints) {
+  if (!waypoints || waypoints.length < 2) return 0;
+  let total = 0;
+  for (let i = 0; i < waypoints.length - 1; i++)
+    total += _haversineNm(waypoints[i][0], waypoints[i][1], waypoints[i+1][0], waypoints[i+1][1]);
+  return total;
+}
+
+function _circleGeoJSON(lat, lon, radiusNm, steps = 72) {
+  const rLat = radiusNm / 60;
+  const rLon = rLat / Math.cos(lat * Math.PI / 180);
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = (i / steps) * 2 * Math.PI;
+    pts.push([lon + rLon * Math.sin(a), lat + rLat * Math.cos(a)]);
+  }
+  return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [pts] } };
+}
+
+async function _fetchSeamarks(minLat, minLon, maxLat, maxLon, signal) {
+  const bbox = `${minLat},${minLon},${maxLat},${maxLon}`;
+  const query = `[out:json][timeout:15];(`+
+    `node["seamark:type"="buoy_lateral"](${bbox});`+
+    `node["seamark:type"="rock"](${bbox});`+
+    `node["seamark:type"="wreck"](${bbox});`+
+    `node["seamark:type"="obstruction"](${bbox});`+
+    `node["seamark:type"="shoal"](${bbox});`+
+    `node["natural"="reef"](${bbox});`+
+  `);out body;`;
+  const res = await fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    body: `data=${encodeURIComponent(query)}`,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    signal,
+  });
+  if (!res.ok) return { buoys: [], hazards: [] };
+  const data = await res.json();
+  const buoys = [], hazards = [];
+  for (const el of data.elements || []) {
+    if (el.lat == null) continue;
+    const t = el.tags?.['seamark:type'];
+    if (t === 'buoy_lateral') {
+      const ref = el.tags?.['seamark:buoy_lateral:ref'] || el.tags?.ref || '';
+      const colour = el.tags?.['seamark:buoy_lateral:colour'] || '';
+      buoys.push({ lat: el.lat, lon: el.lon, ref, isRed: colour.includes('red'), isGreen: colour.includes('green') });
+    } else {
+      hazards.push({ lat: el.lat, lon: el.lon, type: t || el.tags?.natural || 'hazard', name: el.tags?.name || el.tags?.['seamark:name'] || t || 'Hazard' });
+    }
+  }
+  return { buoys, hazards };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
-function LiveMap({ route, accent, routingActive, onPinSet }) {
+function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat, fuelLevel }) {
   const mapRef = useRef(null);
   const [userPos, setUserPos] = useState(null); // { lat, lng, acc, heading, speedKts }
   const [tracking, setTracking] = useState(false);
@@ -297,6 +350,7 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
   const [selectedVessel, setSelectedVessel] = useState(null);
   const [mapClick, setMapClick] = useState(null);
   const [pinBusy, setPinBusy] = useState(false);
+  const [seamarks, setSeamarks] = useState({ buoys: [], hazards: [] });
   const watchRef = useRef(null);
   const wsRef = useRef(null);
   const headingHistory = useRef([]);
@@ -342,7 +396,7 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
         pitch: 65,
         zoom: _navZoom(userPos.speedKts ?? 0),
         duration: 600,
-        padding: { top: 60, bottom: 270, left: 20, right: 20 },
+        padding: { top: 60, bottom: bottomInset + 160, left: 20, right: 20 },
       });
     } else if (follow) {
       mapRef.current.flyTo({ center: [userPos.lng, userPos.lat], duration: 800 });
@@ -357,6 +411,21 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
 
   // Reset nav state when route changes
   useEffect(() => { setNavMode(false); setArrived(false); }, [route?.to]);
+
+  // Fetch buoys + hazards along the route
+  useEffect(() => {
+    const wpts = route?.waypoints;
+    if (!wpts || wpts.length < 2) { setSeamarks({ buoys: [], hazards: [] }); return; }
+    const ctrl = new AbortController();
+    const margin = 0.04;
+    const lats = wpts.map(([la]) => la), lons = wpts.map(([, lo]) => lo);
+    _fetchSeamarks(
+      Math.min(...lats) - margin, Math.min(...lons) - margin,
+      Math.max(...lats) + margin, Math.max(...lons) + margin,
+      ctrl.signal,
+    ).then(setSeamarks).catch(() => {});
+    return () => ctrl.abort();
+  }, [JSON.stringify(route?.waypoints)]);
 
   // Arrival detection
   useEffect(() => {
@@ -458,6 +527,14 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
     ? route.waypoints.map(([lat, lon]) => [lon, lat])
     : (depCoords && arrCoords ? [[depCoords[1], depCoords[0]], [arrCoords[1], arrCoords[0]]] : null);
 
+  // Fuel range circle
+  const fuelRangeNm = (boat?.fuelBurn > 0 && boat?.cruiseSpeed > 0 && fuelLevel > 0)
+    ? (fuelLevel / boat.fuelBurn) * boat.cruiseSpeed
+    : null;
+  const rangeCircle = fuelRangeNm && depCoords
+    ? _circleGeoJSON(depCoords[0], depCoords[1], fuelRangeNm)
+    : null;
+
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       <Map
@@ -471,6 +548,14 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
           setMapClick({ lat: e.lngLat.lat, lon: e.lngLat.lng, x: e.point.x, y: e.point.y });
         } : undefined}
       >
+        {/* Fuel range circle */}
+        {rangeCircle && (
+          <Source id="range" type="geojson" data={rangeCircle}>
+            <Layer id="range-fill" type="fill" paint={{ 'fill-color': accent, 'fill-opacity': 0.06 }}/>
+            <Layer id="range-line" type="line" paint={{ 'line-color': accent, 'line-width': 1.5, 'line-opacity': 0.5, 'line-dasharray': [4, 3] }}/>
+          </Source>
+        )}
+
         {/* Route line — glow + dashed overlay */}
         {routeCoords && (
           <Source id="route" type="geojson" data={{ type: 'Feature', geometry: { type: 'LineString', coordinates: routeCoords } }}>
@@ -484,6 +569,41 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
             />
           </Source>
         )}
+
+        {/* Hazard markers — rocks, wrecks, obstructions, shoals, reefs */}
+        {seamarks.hazards.map((h, i) => (
+          <Marker key={`haz-${i}`} longitude={h.lon} latitude={h.lat} anchor="center">
+            <div title={h.name} style={{
+              width: 20, height: 20, borderRadius: 5,
+              background: '#DC2626', border: '1.5px solid rgba(255,120,120,0.5)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 11, lineHeight: 1,
+              boxShadow: '0 0 0 3px rgba(220,38,38,0.25), 0 2px 6px rgba(0,0,0,0.6)',
+              cursor: 'default',
+            }}>⚠</div>
+          </Marker>
+        ))}
+
+        {/* Buoy markers — colored and numbered per IALA */}
+        {seamarks.buoys.map((b, i) => {
+          const bg = b.isRed ? '#E53E3E' : b.isGreen ? '#22C55E' : '#F6AD55';
+          const textColor = b.isRed || !b.isGreen ? 'white' : '#052E16';
+          return (
+            <Marker key={`buoy-${i}`} longitude={b.lon} latitude={b.lat} anchor="center">
+              <div style={{
+                minWidth: 20, height: 20, borderRadius: 99,
+                paddingLeft: b.ref ? 4 : 0, paddingRight: b.ref ? 4 : 0,
+                background: bg, border: '1.5px solid rgba(0,0,0,0.4)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 9, fontWeight: 800, color: textColor,
+                boxShadow: '0 1px 5px rgba(0,0,0,0.7)',
+                cursor: 'default', whiteSpace: 'nowrap',
+              }}>
+                {b.ref || ''}
+              </div>
+            </Marker>
+          );
+        })}
 
         {/* Departure dot */}
         {depCoords && (
@@ -618,7 +738,7 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
       {/* Navigate button — shown when GPS active + route destination set */}
       {tracking && arrCoords && !navMode && (
         <button onClick={() => { setNavMode(true); setArrived(false); setFollow(true); }} style={{
-          position: 'absolute', bottom: 284, right: 14, zIndex: 1000,
+          position: 'absolute', bottom: bottomInset + 104, right: 14, zIndex: 1000,
           padding: '0 14px', height: 36, borderRadius: 10,
           background: accent, color: '#06151E',
           fontSize: 12.5, fontWeight: 700, letterSpacing: '0.04em',
@@ -640,7 +760,7 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
 
         return (
           <div style={{
-            position: 'absolute', bottom: 284, left: 12, right: 12, zIndex: 1000,
+            position: 'absolute', bottom: bottomInset + 66, left: 12, right: 12, zIndex: 1000,
             background: 'rgba(8,17,28,0.97)', border: '1px solid var(--c-border)',
             borderRadius: 18, overflow: 'hidden',
             boxShadow: '0 -4px 30px rgba(0,0,0,0.6)',
@@ -703,7 +823,7 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
       <button
         onClick={tracking ? stopGPS : startGPS}
         style={{
-          position: 'absolute', bottom: 228, right: 14, zIndex: 1000,
+          position: 'absolute', bottom: bottomInset + 14, right: 14, zIndex: 1000,
           width: 44, height: 44, borderRadius: 12,
           background: tracking ? '#4F9FFF' : 'rgba(10,20,32,0.9)',
           border: `1.5px solid ${tracking ? '#4F9FFF' : 'var(--c-border)'}`,
@@ -718,10 +838,10 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
         </svg>
       </button>
 
-      {/* Follow mode chip */}
-      {tracking && (
+      {/* Follow mode chip — hidden in navMode (navigation always follows) */}
+      {tracking && !navMode && (
         <button onClick={() => setFollow(f => !f)} style={{
-          position: 'absolute', bottom: 280, right: 14, zIndex: 1000,
+          position: 'absolute', bottom: bottomInset + 66, right: 14, zIndex: 1000,
           padding: '5px 11px', borderRadius: 99, cursor: 'pointer',
           background: 'rgba(10,20,32,0.9)', border: `1px solid ${follow ? '#4F9FFF' : 'var(--c-border)'}`,
           color: follow ? '#4F9FFF' : 'var(--c-text-3)', fontSize: 11.5, fontWeight: 600,
@@ -762,7 +882,7 @@ function LiveMap({ route, accent, routingActive, onPinSet }) {
       {/* GPS error */}
       {gpsError && (
         <div style={{
-          position: 'absolute', bottom: 330, left: 14, right: 14, zIndex: 1000,
+          position: 'absolute', bottom: bottomInset + 148, left: 14, right: 14, zIndex: 1000,
           padding: '10px 14px', borderRadius: 10,
           background: 'rgba(63,20,24,0.95)', border: '1px solid #7A2530',
           color: '#FF6B6B', fontSize: 13,
@@ -1572,6 +1692,37 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
   );
 }
 
+function FuelCard({ boat, fuelLevel, fuelRangeNm, routeDistNm, fuelOk, accent }) {
+  const cap = boat?.fuelCap || 0;
+  const pct = cap > 0 ? Math.min(1, fuelLevel / cap) : 0;
+  const overRange = fuelRangeNm != null && routeDistNm > 0 && routeDistNm > fuelRangeNm;
+  const barColor = pct > 0.5 ? '#22C55E' : pct > 0.25 ? '#F59E0B' : '#EF4444';
+  return (
+    <div style={{ background: 'var(--c-surface)', border: `1px solid ${overRange ? '#7A2530' : 'var(--c-border)'}`, borderRadius: 16, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Fuel</div>
+        <div style={{ fontSize: 12, color: overRange ? '#FF6B6B' : 'var(--c-text-2)', fontWeight: 600 }}>
+          {fuelRangeNm != null ? `Range: ${fuelRangeNm.toFixed(0)} nm` : '—'}
+          {routeDistNm > 0 ? ` · Route: ${routeDistNm.toFixed(0)} nm` : ''}
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1, height: 8, borderRadius: 99, background: 'var(--c-surface-alt)', overflow: 'hidden' }}>
+          <div style={{ width: `${pct * 100}%`, height: '100%', background: barColor, borderRadius: 99, transition: 'width 0.4s' }}/>
+        </div>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--c-text)', minWidth: 52, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+          {fuelLevel.toFixed(1)} / {cap} gal
+        </span>
+      </div>
+      {overRange && (
+        <div style={{ fontSize: 12, color: '#FF6B6B', fontWeight: 600 }}>
+          ⚠ Destination is beyond fuel range — refuel or shorten route.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────
 // TRIP DETAIL SCREEN
 // ─────────────────────────────────────────────────────────────
@@ -1636,9 +1787,17 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
 
   const sheetH = sheetExpanded ? 540 : 380;
 
+  // Fuel range
+  const storedFuel = boat?.id ? parseFloat(localStorage.getItem(`safeseas_fuel_${boat.id}`) || '0') : 0;
+  const fuelLevel  = storedFuel > 0 ? storedFuel : (boat?.fuelLevel || 0);
+  const fuelRangeNm = (boat?.fuelBurn > 0 && boat?.cruiseSpeed > 0 && fuelLevel > 0)
+    ? (fuelLevel / boat.fuelBurn) * boat.cruiseSpeed : null;
+  const routeDistNm = _routeDistNm(route?.waypoints);
+  const fuelOk = fuelRangeNm == null || routeDistNm === 0 || fuelRangeNm >= routeDistNm;
+
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-      <LiveMap accent={accent} route={route} routingActive={routingActive} onPinSet={onPinSet}/>
+      <LiveMap accent={accent} route={route} routingActive={routingActive} onPinSet={onPinSet} bottomInset={sheetH} boat={boat} fuelLevel={fuelLevel}/>
 
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 100, zIndex: 500,
         background: 'linear-gradient(180deg, rgba(6,21,32,0.7), transparent)', pointerEvents: 'none' }}/>
@@ -1722,6 +1881,11 @@ function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, curre
               <div style={{ fontSize: 17, color: 'var(--c-text)', fontWeight: 700, marginTop: 2, letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>{bestWindow}</div>
             </div>
           </div>
+
+          {/* Fuel range card */}
+          {boat?.fuelBurn > 0 && boat?.cruiseSpeed > 0 && boat?.fuelCap > 0 && (
+            <FuelCard boat={boat} fuelLevel={fuelLevel} fuelRangeNm={fuelRangeNm} routeDistNm={routeDistNm} fuelOk={fuelOk} accent={accent}/>
+          )}
 
           <div style={{ background: 'var(--c-surface-alt)', border: '1px solid var(--c-border)', borderRadius: 18, padding: 16, display: 'grid', gap: 12 }}>
             <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Plan your trip</div>
@@ -1846,12 +2010,48 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
           </div>
         </div>
         {boat && (
-          <div style={{ marginTop: 14, padding: 14, background: 'var(--c-surface-alt)', borderRadius: 12, border: '1px solid var(--c-border-soft)' }}>
-            <div style={{ fontSize: 11.5, color: 'var(--c-text-2)', lineHeight: 1.5 }}>
-              Comfortable up to{' '}
-              <span style={{ color: accent, fontWeight: 700 }}>{boat.waveLim || '—'} ft waves</span> and{' '}
-              <span style={{ color: accent, fontWeight: 700 }}>{boat.windLim || '—'} kt winds</span>. SafeSeas uses these limits for go/no-go decisions.
+          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ padding: 14, background: 'var(--c-surface-alt)', borderRadius: 12, border: '1px solid var(--c-border-soft)' }}>
+              <div style={{ fontSize: 11.5, color: 'var(--c-text-2)', lineHeight: 1.5 }}>
+                Comfortable up to{' '}
+                <span style={{ color: accent, fontWeight: 700 }}>{boat.waveLim || '—'} ft waves</span> and{' '}
+                <span style={{ color: accent, fontWeight: 700 }}>{boat.windLim || '—'} kt winds</span>. SafeSeas uses these limits for go/no-go decisions.
+              </div>
             </div>
+            {boat.fuelCap > 0 && (() => {
+              const storageKey = user ? `safeseas_fuel_${boat.id}` : null;
+              const stored = storageKey ? parseFloat(localStorage.getItem(storageKey) || '') : NaN;
+              const cur = isNaN(stored) ? (boat.fuelLevel || 0) : stored;
+              const pct = cur / boat.fuelCap;
+              const barColor = pct > 0.5 ? '#22C55E' : pct > 0.25 ? '#F59E0B' : '#EF4444';
+              return (
+                <div style={{ padding: 14, background: 'var(--c-surface-alt)', borderRadius: 12, border: '1px solid var(--c-border-soft)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Current fuel</div>
+                    <div style={{ fontSize: 12, color: 'var(--c-text-2)', fontWeight: 600 }}>{cur.toFixed(1)} / {boat.fuelCap} gal</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ flex: 1, height: 6, borderRadius: 99, background: 'var(--c-bg)', overflow: 'hidden' }}>
+                      <div style={{ width: `${pct * 100}%`, height: '100%', background: barColor, borderRadius: 99, transition: 'width 0.3s' }}/>
+                    </div>
+                  </div>
+                  <input type="range" min={0} max={boat.fuelCap} step={0.5}
+                    value={cur}
+                    onChange={e => {
+                      if (storageKey) localStorage.setItem(storageKey, e.target.value);
+                      setBoat({ ...boat, _fuelLevel: parseFloat(e.target.value) });
+                    }}
+                    style={{ width: '100%', marginTop: 8, accentColor: accent }}
+                  />
+                  {boat.fuelBurn > 0 && boat.cruiseSpeed > 0 && (
+                    <div style={{ fontSize: 11.5, color: 'var(--c-text-3)', marginTop: 4 }}>
+                      Est. range: <span style={{ color: accent, fontWeight: 700 }}>{((cur / boat.fuelBurn) * boat.cruiseSpeed).toFixed(0)} nm</span>{' '}
+                      at {boat.cruiseSpeed} kt / {boat.fuelBurn} gph
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
       </Card>
@@ -1983,6 +2183,9 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
             <Field label="Length (ft)"    placeholder="22"                      value={custom.length}      onChange={v => setCustom({...custom, length: v})} numeric/>
             <Field label="Wave limit (ft)" placeholder="3.5"                   value={custom.waveLim || ''} onChange={v => setCustom({...custom, waveLim: parseFloat(v) || 0})} numeric />
             <Field label="Wind limit (kt)" placeholder="22"                    value={custom.windLim || ''} onChange={v => setCustom({...custom, windLim: parseFloat(v) || 0})} numeric />
+            <Field label="Cruise speed (kt)" placeholder="e.g. 22"            value={custom.cruiseSpeed || ''} onChange={v => setCustom({...custom, cruiseSpeed: parseFloat(v) || 0})} numeric />
+            <Field label="Fuel tank (gal)"   placeholder="e.g. 56"            value={custom.fuelCap || ''} onChange={v => setCustom({...custom, fuelCap: parseFloat(v) || 0})} numeric />
+            <Field label="Fuel burn (gph)"   placeholder="e.g. 4.5"           value={custom.fuelBurn || ''} onChange={v => setCustom({...custom, fuelBurn: parseFloat(v) || 0})} numeric />
             <Field label="Description"    placeholder="Optional description"    value={custom.description || ''} onChange={v => setCustom({...custom, description: v})} />
             <div>
               <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>Type</div>
@@ -2003,7 +2206,7 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
               <button onClick={async () => {
                 if (!custom.name.trim()) return;
                 await addBoat(custom);
-                setCustom({ name: '', length: '', type: '', waveLim: 0, windLim: 0, description: '', year: '' });
+                setCustom({ name: '', length: '', type: '', waveLim: 0, windLim: 0, description: '', year: '', cruiseSpeed: 0, fuelCap: 0, fuelBurn: 0 });
                 setCustomOpen(false);
               }} style={{ all: 'unset', cursor: 'pointer', padding: '10px 14px', background: accent, color: '#06151E', borderRadius: 10, fontWeight: 700 }}>Save boat</button>
               <button onClick={() => setCustomOpen(false)} style={{ all: 'unset', cursor: 'pointer', padding: '10px 14px', background: 'var(--c-surface-alt)', color: 'var(--c-text-2)', borderRadius: 10 }}>Cancel</button>

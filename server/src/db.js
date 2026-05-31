@@ -281,7 +281,7 @@ async function tryMySQL() {
 
     getBoats: async (userId) => {
       const [rows] = await conn.query(
-        'SELECT id, name, description, type, year, length, wave_lim AS waveLim, wind_lim AS windLim, created_at FROM user_boats WHERE user_id = ?',
+        'SELECT id, name, description, type, year, length, wave_lim AS waveLim, wind_lim AS windLim, cruise_speed AS cruiseSpeed, fuel_cap AS fuelCap, fuel_burn AS fuelBurn, created_at FROM user_boats WHERE user_id = ?',
         [userId]
       );
       return rows;
@@ -289,8 +289,8 @@ async function tryMySQL() {
 
     addBoat: async (userId, boat) => {
       const [result] = await conn.query(
-        'INSERT INTO user_boats (user_id, name, description, type, year, length, wave_lim, wind_lim) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [userId, boat.name || '', boat.description || '', boat.type || '', boat.year || '', boat.length || '', boat.waveLim || null, boat.windLim || null]
+        'INSERT INTO user_boats (user_id, name, description, type, year, length, wave_lim, wind_lim, cruise_speed, fuel_cap, fuel_burn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [userId, boat.name || '', boat.description || '', boat.type || '', boat.year || '', boat.length || '', boat.waveLim || null, boat.windLim || null, boat.cruiseSpeed || null, boat.fuelCap || null, boat.fuelBurn || null]
       );
       return result.insertId;
     },
