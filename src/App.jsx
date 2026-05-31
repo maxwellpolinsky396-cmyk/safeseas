@@ -3095,7 +3095,14 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage }) {
 
           return (
             <div key={msg.id} style={{ display: 'flex', gap: 8, flexDirection: isMe ? 'row-reverse' : 'row', alignItems: 'flex-end' }}>
-              {!isMe && (
+              {isMe ? (
+                <div style={{
+                  width: 30, height: 30, borderRadius: 99, flexShrink: 0,
+                  background: accentColor,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 12, fontWeight: 800, color: '#06151E',
+                }}>{initials}</div>
+              ) : (
                 <button onClick={() => openProfile(msg)} style={{
                   all: 'unset', cursor: 'pointer',
                   width: 30, height: 30, borderRadius: 99, flexShrink: 0,
