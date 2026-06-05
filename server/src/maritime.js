@@ -385,22 +385,9 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
     return [[fromLat, fromLon], [toLat, toLon]];
   }
 
-  let waypoints = _simplify(routePath.map(k => k.split(',').map(Number)), 0.002, oceanPolys, landPolys);
+  const waypoints = _simplify(routePath.map(k => k.split(',').map(Number)), 0.002, oceanPolys, landPolys);
 
-  // Anchor endpoints to the exact pin only when the straight-line segment from
-  // the pin to the first/last A* waypoint is fully through navigable water.
-  // _checkSegment samples 20-500 points along the segment using the dual
-  // constraint — if any sample hits land (either polygon), we skip the anchor
-  // and keep the already-correct snapped water cell instead.
-  // This handles pins on small barrier islands regardless of polygon resolution.
-  const astarFrom = routePath[0].split(',').map(Number);
-  const astarTo   = routePath[routePath.length - 1].split(',').map(Number);
-  const fromClear = !_checkSegment(fromLat, fromLon, astarFrom[0], astarFrom[1], oceanPolys, landPolys);
-  const toClear   = !_checkSegment(toLat,   toLon,   astarTo[0],  astarTo[1],   oceanPolys, landPolys);
-  if (fromClear) waypoints[0] = [fromLat, fromLon];
-  if (toClear)   waypoints[waypoints.length - 1] = [toLat, toLon];
-
-  console.log(`Route: ${waypoints.length} waypoints (from-clear=${fromClear}, to-clear=${toClear})`);
+  console.log(`Route: ${waypoints.length} waypoints`);
   return waypoints;
 }
 
