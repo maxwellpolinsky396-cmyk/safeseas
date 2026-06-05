@@ -242,25 +242,43 @@ function _simplify(pts, tol = 0.002, oceanPolys) {
 }
 
 // ─── Nearest water cell in grid ───────────────────────────────────────────────
+// Searches outward in expanding rings.  When hint coords (the other endpoint)
+// are supplied, scores candidates by: grid_distance - 0.4 * cos(angle_toward_hint)
+// so that water cells on the side of a barrier island facing the destination are
+// preferred over equally-close cells on the far side.
 
-function _nearestWater(key, waterCells, lats, lons) {
+function _nearestWater(key, waterCells, lats, lons, hintLat, hintLon) {
   if (waterCells.has(key)) return key;
   const [cLat, cLon] = key.split(',').map(Number);
   const ci = lats.findIndex(v => v === cLat);
   const cj = lons.findIndex(v => v === cLon);
   if (ci < 0 || cj < 0) return key;
-  for (let r = 1; r <= 12; r++) {
+
+  // Unit vector toward hint (destination/departure)
+  const dhLat = (hintLat ?? cLat) - cLat;
+  const dhLon = (hintLon ?? cLon) - cLon;
+  const dhLen = Math.hypot(dhLat, dhLon) || 1;
+  const uhLat = dhLat / dhLen, uhLon = dhLon / dhLen;
+
+  let bestKey = null, bestScore = Infinity;
+
+  for (let r = 1; r <= 16; r++) {
     for (let di = -r; di <= r; di++) {
       for (let dj = -r; dj <= r; dj++) {
         if (Math.abs(di) !== r && Math.abs(dj) !== r) continue;
         const ni = ci + di, nj = cj + dj;
         if (ni < 0 || ni >= lats.length || nj < 0 || nj >= lons.length) continue;
         const nKey = `${lats[ni]},${lons[nj]}`;
-        if (waterCells.has(nKey)) return nKey;
+        if (!waterCells.has(nKey)) continue;
+        const dot  = (di * uhLat + dj * uhLon) / (Math.hypot(di, dj) || 1);
+        const score = Math.hypot(di, dj) - 0.4 * dot;
+        if (score < bestScore) { bestScore = score; bestKey = nKey; }
       }
     }
+    // Stop once we've found a candidate in this ring and gone one ring further
+    if (bestKey && r > Math.sqrt(bestScore) + 1) break;
   }
-  return key;
+  return bestKey ?? key;
 }
 
 // ─── Core routing ─────────────────────────────────────────────────────────────
@@ -314,8 +332,9 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
     return `${nL},${nO}`;
   };
 
-  const startKey = _nearestWater(nearKey(fromLat, fromLon), waterCells, lats, lons);
-  const endKey   = _nearestWater(nearKey(toLat,   toLon),   waterCells, lats, lons);
+  // Hint = the OTHER endpoint so snapping prefers the side facing the destination
+  const startKey = _nearestWater(nearKey(fromLat, fromLon), waterCells, lats, lons, toLat,   toLon);
+  const endKey   = _nearestWater(nearKey(toLat,   toLon),   waterCells, lats, lons, fromLat, fromLon);
 
   if (!waterCells.has(startKey)) waterCells.add(startKey);
   if (!waterCells.has(endKey))   waterCells.add(endKey);
@@ -328,11 +347,14 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
 
   let waypoints = _simplify(routePath.map(k => k.split(',').map(Number)), 0.002, oceanPolys);
 
-  // Always anchor endpoints to exact user-specified coords.
-  waypoints[0] = [fromLat, fromLon];
-  waypoints[waypoints.length - 1] = [toLat, toLon];
+  // Anchor endpoints to exact user coords ONLY when the pin is in navigable water.
+  // If a pin sits on land at NE10m scale (marina, dock, barrier-island road), the
+  // A* already started from the nearest water cell — keep that rather than drawing
+  // a straight line back through land to the pin.
+  if (_isOcean(fromLat, fromLon, oceanPolys)) waypoints[0] = [fromLat, fromLon];
+  if (_isOcean(toLat,   toLon,   oceanPolys)) waypoints[waypoints.length - 1] = [toLat, toLon];
 
-  console.log(`Route: ${waypoints.length} waypoints`);
+  console.log(`Route: ${waypoints.length} waypoints, from-in-ocean=${_isOcean(fromLat,fromLon,oceanPolys)}, to-in-ocean=${_isOcean(toLat,toLon,oceanPolys)}`);
   return waypoints;
 }
 
