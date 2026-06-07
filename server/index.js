@@ -8,6 +8,9 @@ const safety   = require('./src/safety');
 const geocode  = require('./src/geocode');
 const mailer   = require('./src/mailer');
 const maritime = require('./src/maritime');
+const noaa     = require('./src/noaa');
+
+noaa.loadStaticData();
 
 // In-memory store: email -> { code, expires }
 const resetCodes = new Map();
@@ -443,6 +446,55 @@ app.get('/api/users/:id/profile', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('profile error', err);
     res.status(500).json({ error: 'Failed to load profile' });
+  }
+});
+
+// ── NOAA data endpoints ──────────────────────────────────────────────────────
+
+// Bridges near a point (or along a route)
+// ?lat=&lon=&radius=50   or   ?waypoints=[[lat,lon],...]&radius=5
+app.get('/api/noaa/bridges', async (req, res) => {
+  try {
+    const radius = parseFloat(req.query.radius) || 50;
+    if (req.query.waypoints) {
+      const wps = JSON.parse(req.query.waypoints);
+      const seen = new Set();
+      const bridges = [];
+      for (const [lat, lon] of wps) {
+        for (const b of noaa.getBridgesNear(lat, lon, Math.min(radius, 5))) {
+          const key = `${b.lat},${b.lon}`;
+          if (!seen.has(key)) { seen.add(key); bridges.push(b); }
+        }
+      }
+      return res.json(bridges.sort((a, b) => a.dist_km - b.dist_km));
+    }
+    const lat = parseFloat(req.query.lat);
+    const lon = parseFloat(req.query.lon);
+    if (isNaN(lat) || isNaN(lon)) return res.status(400).json({ error: 'lat/lon required' });
+    res.json(noaa.getBridgesNear(lat, lon, radius));
+  } catch (err) {
+    console.error('bridges error', err);
+    res.status(500).json({ error: 'Failed to query bridges' });
+  }
+});
+
+// Nearest NDBC buoys to a point
+app.get('/api/noaa/buoys', async (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lon = parseFloat(req.query.lon);
+  const n   = Math.min(parseInt(req.query.n) || 3, 10);
+  if (isNaN(lat) || isNaN(lon)) return res.status(400).json({ error: 'lat/lon required' });
+  res.json(noaa.getNearestBuoys(lat, lon, n));
+});
+
+// Live observations from a specific NDBC buoy
+app.get('/api/noaa/buoys/:stationId/obs', async (req, res) => {
+  try {
+    const obs = await noaa.getBuoyObservations(req.params.stationId);
+    if (!obs) return res.status(404).json({ error: 'No data from buoy' });
+    res.json(obs);
+  } catch (err) {
+    res.status(502).json({ error: `NDBC fetch failed: ${err.message}` });
   }
 });
 

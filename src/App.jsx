@@ -231,13 +231,6 @@ const MAP_STYLE = {
       attribution: '© Esri, DigitalGlobe',
       maxzoom: 19,
     },
-    openseamap: {
-      type: 'raster',
-      tiles: ['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      attribution: '© OpenSeaMap',
-      maxzoom: 18,
-    },
     terrarium: {
       type: 'raster-dem',
       tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
@@ -248,7 +241,6 @@ const MAP_STYLE = {
   },
   layers: [
     { id: 'esri-tiles', type: 'raster', source: 'esri' },
-    { id: 'openseamap-tiles', type: 'raster', source: 'openseamap', paint: { 'raster-opacity': 0.85 } },
   ],
   terrain: { source: 'terrarium', exaggeration: 1.5 },
 };
@@ -385,34 +377,56 @@ async function _fetchSeamarks(minLat, minLon, maxLat, maxLon, signal) {
     `node["seamark:type"="obstruction"](${bbox});`+
     `node["seamark:type"="shoal"](${bbox});`+
     `node["natural"="reef"](${bbox});`+
-    `way["man_made"="bridge"]["maxheight"](${bbox});`+
-    `way["bridge"="yes"]["maxheight"](${bbox});`+
   `);out center;`;
-  const res = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    body: `data=${encodeURIComponent(query)}`,
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    signal,
-  });
-  if (!res.ok) return { buoys: [], hazards: [], bridges: [] };
-  const data = await res.json();
+
+  const midLat = (minLat + maxLat) / 2;
+  const midLon = (minLon + maxLon) / 2;
+  const radiusKm = Math.max(
+    Math.hypot((maxLat - minLat) * 111, (maxLon - minLon) * 111 * Math.cos(midLat * Math.PI / 180)) / 2,
+    5,
+  );
+
+  const [osmRes, bridgeRes] = await Promise.allSettled([
+    fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      body: `data=${encodeURIComponent(query)}`,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      signal,
+    }),
+    fetch(`http://localhost:4000/api/noaa/bridges?lat=${midLat}&lon=${midLon}&radius=${Math.ceil(radiusKm)}`, { signal }),
+  ]);
+
   const buoys = [], hazards = [], bridges = [];
-  for (const el of data.elements || []) {
-    const elLat = el.lat ?? el.center?.lat;
-    const elLon = el.lon ?? el.center?.lon;
-    if (elLat == null) continue;
-    const t = el.tags?.['seamark:type'];
-    if (el.tags?.man_made === 'bridge' || el.tags?.bridge === 'yes') {
-      const clr = el.tags?.maxheight || el.tags?.['seamark:bridge_clearance:water_level'] || null;
-      if (clr) bridges.push({ lat: elLat, lon: elLon, clearance: clr, name: el.tags?.name || 'Bridge' });
-    } else if (t === 'buoy_lateral') {
-      const ref = el.tags?.['seamark:buoy_lateral:ref'] || el.tags?.ref || '';
-      const colour = el.tags?.['seamark:buoy_lateral:colour'] || '';
-      buoys.push({ lat: elLat, lon: elLon, ref, isRed: colour.includes('red'), isGreen: colour.includes('green') });
-    } else {
-      hazards.push({ lat: elLat, lon: elLon, type: t || el.tags?.natural || 'hazard', name: el.tags?.name || el.tags?.['seamark:name'] || t || 'Hazard' });
+
+  // OSM seamarks (buoys + hazards)
+  if (osmRes.status === 'fulfilled' && osmRes.value.ok) {
+    const data = await osmRes.value.json();
+    for (const el of data.elements || []) {
+      const elLat = el.lat ?? el.center?.lat;
+      const elLon = el.lon ?? el.center?.lon;
+      if (elLat == null) continue;
+      const t = el.tags?.['seamark:type'];
+      if (t === 'buoy_lateral') {
+        const ref = el.tags?.['seamark:buoy_lateral:ref'] || el.tags?.ref || '';
+        const colour = el.tags?.['seamark:buoy_lateral:colour'] || '';
+        buoys.push({ lat: elLat, lon: elLon, ref, isRed: colour.includes('red'), isGreen: colour.includes('green') });
+      } else {
+        hazards.push({ lat: elLat, lon: elLon, type: t || el.tags?.natural || 'hazard', name: el.tags?.name || el.tags?.['seamark:name'] || t || 'Hazard' });
+      }
     }
   }
+
+  // NOAA ENC bridge data
+  if (bridgeRes.status === 'fulfilled' && bridgeRes.value.ok) {
+    const noaaBridges = await bridgeRes.value.json();
+    for (const b of noaaBridges) {
+      if (b.lat == null || !b.verClr_m) continue;
+      const ftRaw = b.verClr_m * 3.281;
+      const clrLabel = `${Math.round(ftRaw)}ft`;
+      bridges.push({ lat: b.lat, lon: b.lon, clearance: clrLabel, name: b.name || 'Bridge', verClr_ft: Math.round(ftRaw) });
+    }
+  }
+
   return { buoys, hazards, bridges };
 }
 
@@ -432,6 +446,8 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
   const [mapClick, setMapClick] = useState(null);
   const [pinBusy, setPinBusy] = useState(false);
   const [seamarks, setSeamarks] = useState({ buoys: [], hazards: [], bridges: [] });
+  const [showSeamarks, setShowSeamarks] = useState(true);
+  const [buoyObs, setBuoyObs] = useState(null); // nearest NDBC buoy live obs
   const watchRef = useRef(null);
   const wsRef = useRef(null);
   const headingHistory = useRef([]);
@@ -493,18 +509,32 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
   // Reset nav state when route changes
   useEffect(() => { setNavMode(false); setArrived(false); }, [route?.to]);
 
-  // Fetch buoys + hazards along the route
+  // Fetch seamarks + NDBC buoy obs along the route
   useEffect(() => {
     const wpts = route?.waypoints;
-    if (!wpts || wpts.length < 2) { setSeamarks({ buoys: [], hazards: [], bridges: [] }); return; }
+    if (!wpts || wpts.length < 2) { setSeamarks({ buoys: [], hazards: [], bridges: [] }); setBuoyObs(null); return; }
     const ctrl = new AbortController();
     const margin = 0.04;
     const lats = wpts.map(([la]) => la), lons = wpts.map(([, lo]) => lo);
+    const midLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+    const midLon = (Math.min(...lons) + Math.max(...lons)) / 2;
+
     _fetchSeamarks(
       Math.min(...lats) - margin, Math.min(...lons) - margin,
       Math.max(...lats) + margin, Math.max(...lons) + margin,
       ctrl.signal,
     ).then(setSeamarks).catch(() => {});
+
+    // Nearest NDBC buoy observations
+    fetch(`http://localhost:4000/api/noaa/buoys?lat=${midLat}&lon=${midLon}&n=1`, { signal: ctrl.signal })
+      .then(r => r.ok ? r.json() : [])
+      .then(async (buoys) => {
+        if (!buoys.length) return;
+        const obs = await fetch(`http://localhost:4000/api/noaa/buoys/${buoys[0].id}/obs`, { signal: ctrl.signal })
+          .then(r => r.ok ? r.json() : null).catch(() => null);
+        if (obs) setBuoyObs({ ...obs, stationName: buoys[0].name, dist_km: buoys[0].distance_km });
+      }).catch(() => {});
+
     return () => ctrl.abort();
   }, [JSON.stringify(route?.waypoints)]);
 
@@ -629,6 +659,16 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
           setMapClick({ lat: e.lngLat.lat, lon: e.lngLat.lng, x: e.point.x, y: e.point.y });
         } : undefined}
       >
+        {/* OpenSeaMap nautical overlay */}
+        {showSeamarks && (
+          <Source id="openseamap" type="raster"
+            tiles={['https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png']}
+            tileSize={256} attribution="© OpenSeaMap" maxzoom={18}
+          >
+            <Layer id="openseamap-tiles" type="raster" paint={{ 'raster-opacity': 0.9 }}/>
+          </Source>
+        )}
+
         {/* Fuel range circle */}
         {rangeCircle && (
           <Source id="range" type="geojson" data={rangeCircle}>
@@ -841,6 +881,53 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
         }}>
           <div style={{ width: 7, height: 7, borderRadius: 99, background: accent, animation: 'pulse 1.2s infinite' }}/>
           <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--c-text-2)' }}>Setting pin…</span>
+        </div>
+      )}
+
+      {/* OpenSeaMap toggle button */}
+      <button
+        onClick={() => setShowSeamarks(v => !v)}
+        title={showSeamarks ? 'Hide nautical chart overlay' : 'Show nautical chart overlay'}
+        style={{
+          position: 'absolute', top: 14, right: 14, zIndex: 1000,
+          width: 36, height: 36, borderRadius: 10, border: 'none', cursor: 'pointer',
+          background: showSeamarks ? 'rgba(34,227,208,0.18)' : 'rgba(10,20,32,0.82)',
+          backdropFilter: 'blur(10px)',
+          boxShadow: showSeamarks
+            ? '0 0 0 1.5px rgba(34,227,208,0.6), 0 2px 8px rgba(0,0,0,0.5)'
+            : '0 0 0 1px rgba(255,255,255,0.12), 0 2px 8px rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 17, transition: 'background 0.15s, box-shadow 0.15s',
+        }}
+      >⚓</button>
+
+      {/* NDBC buoy conditions chip */}
+      {buoyObs && (buoyObs.waveHeight_ft != null || buoyObs.windSpeed_kt != null) && (
+        <div style={{
+          position: 'absolute', top: 58, right: 14, zIndex: 1000,
+          background: 'rgba(8,17,28,0.92)', border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: 10, padding: '6px 10px', backdropFilter: 'blur(12px)',
+          boxShadow: '0 2px 10px rgba(0,0,0,0.5)',
+          display: 'flex', flexDirection: 'column', gap: 2, minWidth: 100,
+        }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 2 }}>
+            NDBC · {buoyObs.stationName?.split(' ')[0]}
+          </div>
+          {buoyObs.waveHeight_ft != null && (
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'white' }}>
+              🌊 {buoyObs.waveHeight_ft} ft
+            </div>
+          )}
+          {buoyObs.windSpeed_kt != null && (
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'white' }}>
+              💨 {buoyObs.windSpeed_kt} kt{buoyObs.windGust_kt ? ` G${buoyObs.windGust_kt}` : ''}
+            </div>
+          )}
+          {buoyObs.waterTemp_f != null && (
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)' }}>
+              Water {buoyObs.waterTemp_f}°F
+            </div>
+          )}
         </div>
       )}
 
