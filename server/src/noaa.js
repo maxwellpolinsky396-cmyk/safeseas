@@ -130,6 +130,121 @@ async function getBuoyObservations(stationId) {
   };
 }
 
+// ── Tidal current stations ───────────────────────────────────────────────────
+
+let currentStations = [];
+let currentStationsLoaded = false;
+const currentPredCache = new Map(); // stationId → { data, fetchedAt }
+
+async function loadCurrentStations() {
+  if (currentStationsLoaded) return;
+  const FILE = path.join(DATA_DIR, 'current_stations.json');
+  try {
+    const raw = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    if (raw._ts && (Date.now() - raw._ts) < 7 * 86400000 && raw.stations?.length) {
+      currentStations = raw.stations;
+      currentStationsLoaded = true;
+      console.log(`Current stations loaded from cache: ${currentStations.length}`);
+      return;
+    }
+  } catch {}
+  try {
+    const res = await fetch(
+      'https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=currentpredictions',
+      { headers: { 'User-Agent': 'SafeSeas/1.0' } }
+    );
+    if (!res.ok) { console.warn(`Current stations fetch: HTTP ${res.status}`); return; }
+    const data = await res.json();
+    currentStations = (data.stations || [])
+      .filter(s => s.lat && s.lng && s.type === 'H') // harmonic only
+      .map(s => ({ id: s.id, name: s.name, lat: parseFloat(s.lat), lon: parseFloat(s.lng), state: s.state || null }));
+    currentStationsLoaded = true;
+    console.log(`Current stations downloaded: ${currentStations.length}`);
+    fs.writeFileSync(FILE, JSON.stringify({ _ts: Date.now(), stations: currentStations }));
+  } catch (e) { console.warn('Failed to download current stations:', e.message); }
+}
+
+function getNearestCurrentStations(lat, lon, n = 8) {
+  return currentStations
+    .map(s => ({ ...s, dist_km: haversine(lat, lon, s.lat, s.lon) }))
+    .sort((a, b) => a.dist_km - b.dist_km)
+    .slice(0, n);
+}
+
+async function fetchCurrentNow(stationId) {
+  const cached = currentPredCache.get(stationId);
+  if (cached && Date.now() - cached.fetchedAt < 30 * 60000) return cached.data;
+
+  const today = new Date();
+  const url = `${BASE_TIDE}?product=currents&application=SafeSeas`+
+    `&begin_date=${formatDate(today)}&end_date=${formatDate(today)}`+
+    `&station=${stationId}&units=english&time_zone=lst_ldt&interval=h&format=json`;
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': 'SafeSeas/1.0' } });
+    if (!res.ok) { currentPredCache.set(stationId, { data: null, fetchedAt: Date.now() }); return null; }
+    const json = await res.json();
+    const preds = json.current_predictions?.cp || [];
+    if (!preds.length) { currentPredCache.set(stationId, { data: null, fetchedAt: Date.now() }); return null; }
+    const now = new Date();
+    const closest = preds.reduce((best, p) => {
+      const diff = Math.abs(new Date(p.t) - now);
+      return !best || diff < Math.abs(new Date(best.t) - now) ? p : best;
+    }, null);
+    const data = closest ? {
+      speed: Math.abs(parseFloat(closest.v) || 0),
+      dir:   parseFloat(closest.d) || 0,
+      type:  closest.q || 'slack',
+      time:  closest.t,
+    } : null;
+    currentPredCache.set(stationId, { data, fetchedAt: Date.now() });
+    return data;
+  } catch { return null; }
+}
+
+// ── Tide water-level stations ─────────────────────────────────────────────────
+
+let tideStations = [];
+let tideStationsLoaded = false;
+
+async function loadTideStations() {
+  if (tideStationsLoaded) return;
+  const FILE = path.join(DATA_DIR, 'tide_stations.json');
+  try {
+    const raw = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    if (raw._ts && (Date.now() - raw._ts) < 7 * 86400000 && raw.stations?.length) {
+      tideStations = raw.stations;
+      tideStationsLoaded = true;
+      console.log(`Tide stations loaded from cache: ${tideStations.length}`);
+      return;
+    }
+  } catch {}
+  try {
+    const res = await fetch(
+      'https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=waterlevels',
+      { headers: { 'User-Agent': 'SafeSeas/1.0' } }
+    );
+    if (!res.ok) { console.warn(`Tide stations fetch: HTTP ${res.status}`); return; }
+    const data = await res.json();
+    tideStations = (data.stations || [])
+      .filter(s => s.lat && s.lng)
+      .map(s => ({ id: s.id, name: s.name, lat: parseFloat(s.lat), lon: parseFloat(s.lng) }));
+    tideStationsLoaded = true;
+    console.log(`Tide stations downloaded: ${tideStations.length}`);
+    fs.writeFileSync(FILE, JSON.stringify({ _ts: Date.now(), stations: tideStations }));
+  } catch (e) { console.warn('Failed to download tide stations:', e.message); }
+}
+
+function getNearestTideStation(lat, lon) {
+  // Fallback to hardcoded lookup if dynamic list not yet loaded
+  const list = tideStations.length ? tideStations : Object.entries(LOCATION_LOOKUP).map(([, v]) => ({ id: v.station, name: Object.keys(LOCATION_LOOKUP).find(k => LOCATION_LOOKUP[k] === v), lat: v.lat, lon: v.lon })).filter(s => s.id);
+  let best = null, bestD = Infinity;
+  for (const s of list) {
+    const d = haversine(lat, lon, s.lat, s.lon);
+    if (d < bestD) { bestD = d; best = { ...s, dist_km: Math.round(d * 10) / 10 }; }
+  }
+  return best;
+}
+
 // ── Bridge/obstruction lookup ────────────────────────────────────────────────
 
 function getBridgesNear(lat, lon, radiusKm = 50) {
@@ -181,6 +296,27 @@ async function getHourlyForecast(lat, lon) {
   return forecast.properties?.periods || [];
 }
 
+async function getActiveAlerts(lat, lon) {
+  try {
+    const data = await fetchJSON(`${BASE_WEATHER}/alerts/active?point=${lat},${lon}`);
+    return (data.features || []).map(f => {
+      const p = f.properties;
+      return {
+        id:        p.id,
+        event:     p.event,
+        headline:  p.headline,
+        description: (p.description || '').slice(0, 500),
+        severity:  p.severity,   // Extreme | Severe | Moderate | Minor | Unknown
+        urgency:   p.urgency,
+        onset:     p.onset,
+        expires:   p.expires,
+        areaDesc:  p.areaDesc,
+        senderName: p.senderName,
+      };
+    });
+  } catch { return []; }
+}
+
 // ── NOAA Tides & Currents ────────────────────────────────────────────────────
 
 function formatDate(date) {
@@ -210,10 +346,17 @@ module.exports = {
   loadStaticData,
   lookupLocation,
   getHourlyForecast,
+  getActiveAlerts,
   getTidePredictions,
   getCurrentPredictions,
   getNearestStation,
   getNearestBuoys,
   getBuoyObservations,
   getBridgesNear,
+  loadCurrentStations,
+  getNearestCurrentStations,
+  fetchCurrentNow,
+  loadTideStations,
+  getNearestTideStation,
+  formatDate,
 };

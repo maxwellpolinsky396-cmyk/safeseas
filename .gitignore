@@ -12,6 +12,11 @@ server/.env
 # Local data store — contains user accounts and sessions
 server/data.json
 
+# Runtime user-generated data — real names/GPS/locations, not sample data
+server/data/hazards.json
+server/data/fuel_logs.json
+server/data/trip_logs.json
+
 # Claude Code project memory (local only)
 .claude/
 

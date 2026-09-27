@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>SafeSeas — Boater Go/No-Go</title>
+<template id="__bundler_thumbnail" data-bg-color="#06121C">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#06121C"/>
+    <g transform="translate(600 400)">
+      <circle r="180" fill="none" stroke="#22E3D0" stroke-width="6" opacity="0.25"/>
+      <circle r="120" fill="none" stroke="#22E3D0" stroke-width="6" opacity="0.5"/>
+      <path d="M-110 60 Q-90 100 -30 100 L80 100 Q140 100 160 60 L150 50 L-100 50 Z" fill="#22E3D0"/>
+      <path d="M-60 50 L-60 -10 L60 -10 L60 50" fill="none" stroke="#06121C" stroke-width="6"/>
+      <path d="M0 -10 L0 -70" stroke="#22E3D0" stroke-width="6" stroke-linecap="round"/>
+      <circle cx="0" cy="-80" r="10" fill="#22E3D0"/>
+    </g>
+  </svg>
+</template>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+  html, body { margin: 0; padding: 0; background: #06121C; }
+  body { font-family: "Inter", -apple-system, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  * { box-sizing: border-box; }
+  input::placeholder { color: #5B7791; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="app.jsx"></script>
+</body>
+</html>

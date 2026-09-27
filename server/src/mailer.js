@@ -33,7 +33,7 @@ async function sendResetCode(email, code) {
       `Your Safe Seas password reset code is: ${code}`,
       '',
       'This code expires in 15 minutes.',
-      "If you didn't request this, you can safely ignore this email.",
+      "If you didn't request this, you can ignore this email, your account is safe at sea.",
     ].join('\n'),
     html: `
       <div style="font-family:-apple-system,system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#0A1420;color:#F1F5F9;border-radius:16px;">

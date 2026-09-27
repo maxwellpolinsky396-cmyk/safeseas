@@ -1,26 +1,29 @@
 const path = require('path');
 const fs   = require('fs');
+const waterRaster = require('./waterRaster');
 
-// ─── Dual-constraint water classification ─────────────────────────────────────
+// ─── Maritime pathfinding ──────────────────────────────────────────────────────
 //
-// A cell is navigable water iff BOTH hold:
-//   1. _isOcean(lat,lon)  — inside the NE10m ocean polygon
-//      (outer ring = world; holes = large land masses / continents)
-//   2. !_isLand(lat,lon)  — outside the NE10m land polygon
-//      (6 837 individual polygons, including small barrier islands & cays)
+// Primary path: an O(1) precomputed water raster (waterRaster.js) covering the
+// app's operating region (continental US Atlantic + Gulf coast + Caribbean
+// margin). Because raster lookups are cheap, A* validates EVERY accepted move
+// — cardinal and diagonal alike — by sampling several points along its length
+// at a fixed real-world spacing. This is what actually prevents land-crossing;
+// previous versions of this file only mid-edge-checked diagonal moves, so a
+// single cardinal hop could pass clean over a barrier island.
 //
-// Using ocean alone misses small barrier islands (no hole in ocean polygon).
-// Using !land alone misses inland lakes / non-ocean areas.
-// Together they correctly classify open ocean, bays, AND small-island coasts.
+// Fallback path: for requests with an endpoint outside the raster's fixed
+// bounding box, the original per-request point-in-polygon (PIP) approach
+// against the raw Natural Earth ocean/land polygons is used instead (slower,
+// but still correctness-safe — it gets the same full-edge validation).
 //
-// Performance:
-//   • Route-level bbox filter  → land 6 837 → ~3 polys; ocean holes ~6 → ~6
-//   • Per-polygon bbox check   → eliminates most remaining polys instantly
-//   • Lat-band edge index (0.5°) → ~200–300 edges tested vs full ring
+// Both paths share one A* implementation, parameterized by a small
+// "water predicate" object: { isWater(lat,lon), edgeClear(la1,lo1,la2,lo2) }.
 
 const BAND = 0.5;
+const NEIGHBORS8 = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
 
-// ─── Ring utilities ───────────────────────────────────────────────────────────
+// ─── Ring utilities (legacy PIP path) ──────────────────────────────────────────
 
 function _buildBandIdx(flat) {
   const n = flat.length >> 1;
@@ -67,7 +70,7 @@ function _inBanded(lo, la, flat, bands) {
   return inside;
 }
 
-// ─── Ocean polygon (positive water mask) ──────────────────────────────────────
+// ─── Ocean polygon (positive water mask) — legacy PIP path ────────────────────
 
 let _oceanIndex = null;
 let _oceanBboxCache = null;
@@ -124,7 +127,7 @@ function _isOcean(lat, lon, polys) {
   return false;
 }
 
-// ─── Land polygon (negative constraint — catches small barrier islands) ────────
+// ─── Land polygon (negative constraint) — legacy PIP path ─────────────────────
 
 let _landIndex = null;
 let _landBboxCache = null;
@@ -157,7 +160,6 @@ function _buildRouteLand(mnLo, mnLa, mxLo, mxLa) {
   const polys = idx.filter(({ bbox }) =>
     bbox[0] <= mxLo && bbox[2] >= mnLo && bbox[1] <= mxLa && bbox[3] >= mnLa
   );
-  console.log(`Land bbox filter: ${polys.length}/${idx.length} polygons`);
   _landBboxCache = { key, polys };
   return polys;
 }
@@ -177,9 +179,97 @@ function _isLand(lat, lon, polys) {
   return false;
 }
 
-// Dual-constraint: navigable water = ocean AND not land
-function _isWater(lat, lon, oceanPolys, landPolys) {
+function _isWaterPIP(lat, lon, oceanPolys, landPolys) {
   return _isOcean(lat, lon, oceanPolys) && !_isLand(lat, lon, landPolys);
+}
+
+// ─── Distance helpers ───────────────────────────────────────────────────────
+
+function _haversineKm(la1, lo1, la2, lo2) {
+  const R = 6371, d2r = Math.PI / 180;
+  const dLat = (la2-la1)*d2r, dLon = (lo2-lo1)*d2r;
+  const a = Math.sin(dLat/2)**2 + Math.cos(la1*d2r)*Math.cos(la2*d2r)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function _pathLengthNm(pts) {
+  let km = 0;
+  for (let i = 1; i < pts.length; i++) {
+    km += _haversineKm(pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]);
+  }
+  return km / 1.852;
+}
+
+// ─── Edge (segment) water verification ─────────────────────────────────────────
+// Samples at a fixed real-world spacing (not a capped sample COUNT) so long
+// chords can't skip over a barrier island narrower than the spacing.
+
+const EDGE_SAMPLE_SPACING_M = 100;
+
+function _rasterEdgeClear(la1, lo1, la2, lo2) {
+  const distM = _haversineKm(la1, lo1, la2, lo2) * 1000;
+  const n = Math.max(1, Math.ceil(distM / EDGE_SAMPLE_SPACING_M));
+  for (let k = 0; k <= n; k++) {
+    const t = k / n;
+    const lat = la1 + t * (la2 - la1);
+    const lon = lo1 + t * (lo2 - lo1);
+    if (waterRaster.isWaterAt(lat, lon) !== true) return false;
+  }
+  return true;
+}
+
+function _pipEdgeClear(la1, lo1, la2, lo2, oceanPolys, landPolys) {
+  const distM = _haversineKm(la1, lo1, la2, lo2) * 1000;
+  const n = Math.max(20, Math.ceil(distM / EDGE_SAMPLE_SPACING_M));
+  for (let k = 0; k <= n; k++) {
+    const t = k / n;
+    const lat = la1 + t * (la2 - la1);
+    const lon = lo1 + t * (lo2 - lo1);
+    if (!_isWaterPIP(lat, lon, oceanPolys, landPolys)) return false;
+  }
+  return true;
+}
+
+// Exact (non-raster) segment check against the raw polygons, at fine (~15m)
+// spacing. The raster is a ~150-170m discretization of the coastline, so it
+// can disagree with the true vector boundary within about one cell of any
+// shoreline — negligible for open-water A* search, but endpoint anchoring
+// connects the literal user-clicked pin (often right at a tight urban
+// waterfront/marina) directly to the route, which is exactly where that
+// discretization risk matters most. Anchoring only runs twice per route over
+// a short (capped ~3km) segment, so paying the exact-PIP cost here is cheap.
+const ANCHOR_SAMPLE_SPACING_M = 15;
+
+function _exactEdgeClear(la1, lo1, la2, lo2, oceanPolys, landPolys) {
+  const distM = _haversineKm(la1, lo1, la2, lo2) * 1000;
+  const n = Math.max(4, Math.ceil(distM / ANCHOR_SAMPLE_SPACING_M));
+  for (let k = 0; k <= n; k++) {
+    const t = k / n;
+    const lat = la1 + t * (la2 - la1);
+    const lon = lo1 + t * (lo2 - lo1);
+    if (!_isWaterPIP(lat, lon, oceanPolys, landPolys)) return false;
+  }
+  return true;
+}
+
+// Builds the water predicate for one route request: raster-backed when both
+// endpoints (plus margin) fall inside the raster's fixed region, PIP-backed
+// otherwise.
+function _makeWaterPredicate(minLat, minLon, maxLat, maxLon) {
+  if (waterRaster.contains(minLat, minLon) && waterRaster.contains(maxLat, maxLon)) {
+    return {
+      mode: 'raster',
+      isWater: (lat, lon) => waterRaster.isWaterAt(lat, lon) === true,
+      edgeClear: _rasterEdgeClear,
+    };
+  }
+  const oceanPolys = _buildRouteOcean(minLon, minLat, maxLon, maxLat);
+  const landPolys  = _buildRouteLand(minLon, minLat, maxLon, maxLat);
+  return {
+    mode: 'legacy-pip',
+    isWater: (lat, lon) => _isWaterPIP(lat, lon, oceanPolys, landPolys),
+    edgeClear: (la1, lo1, la2, lo2) => _pipEdgeClear(la1, lo1, la2, lo2, oceanPolys, landPolys),
+  };
 }
 
 // ─── Min-heap ─────────────────────────────────────────────────────────────────
@@ -193,24 +283,26 @@ class MinHeap {
   _dn(i) { const n=this._d.length; for(;;){ let s=i,l=2*i+1,r=2*i+2; if(l<n&&this._d[l].p<this._d[s].p)s=l; if(r<n&&this._d[r].p<this._d[s].p)s=r; if(s===i)break; [this._d[s],this._d[i]]=[this._d[i],this._d[s]]; i=s; } }
 }
 
-// ─── A* over water grid ───────────────────────────────────────────────────────
-// Diagonal land-crossing safeguards:
-//   1. No corner-cutting: both cardinal intermediates must be water cells.
-//   2. Diagonal midpoint dual-check: midpoint of diagonal segment must be
-//      water by both ocean polygon and land polygon.
+// ─── A* over the water grid ─────────────────────────────────────────────────
+// Every accepted move — cardinal AND diagonal — is validated with
+// waterPred.edgeClear(), which samples along the full edge length at a fixed
+// real-world spacing. This is the fix for the core bug: the old version only
+// mid-edge-checked diagonal moves, so a cardinal hop could cross a barrier
+// island undetected.
 
-function _astar(waterCells, startKey, endKey, lats, lons, oceanPolys, landPolys) {
+function _astar(startLat, startLon, endLat, endLon, lats, lons, waterPred) {
   const latIdx = new Map(lats.map((v, i) => [v, i]));
   const lonIdx = new Map(lons.map((v, i) => [v, i]));
-  const [eLat, eLon] = endKey.split(',').map(Number);
-  const step = lats.length > 1 ? lats[1] - lats[0] : 0.01;
+  const startKey = `${startLat},${startLon}`;
+  const endKey = `${endLat},${endLon}`;
+  const cosLat = Math.cos(((startLat + endLat) / 2) * Math.PI / 180);
 
-  const h = (lat, lon) => Math.hypot(lat - eLat, lon - eLon);
+  const h = (lat, lon) => Math.hypot(lat - endLat, (lon - endLon) * cosLat);
   const open   = new MinHeap();
   const g      = new Map([[startKey, 0]]);
   const from   = new Map();
   const closed = new Set();
-  open.push(startKey, h(...startKey.split(',').map(Number)));
+  open.push(startKey, h(startLat, startLon));
 
   let iters = 0;
   while (open.size && iters++ < 80000) {
@@ -226,60 +318,48 @@ function _astar(waterCells, startKey, endKey, lats, lons, oceanPolys, landPolys)
     const ci = latIdx.get(cLat), cj = lonIdx.get(cLon);
     if (ci == null || cj == null) continue;
 
-    for (const [di, dj] of [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]]) {
+    for (const [di, dj] of NEIGHBORS8) {
       const ni = ci + di, nj = cj + dj;
       if (ni < 0 || ni >= lats.length || nj < 0 || nj >= lons.length) continue;
-      const nKey = `${lats[ni]},${lons[nj]}`;
-      if (!waterCells.has(nKey) || closed.has(nKey)) continue;
+      const nLat = lats[ni], nLon = lons[nj];
+      const nKey = `${nLat},${nLon}`;
+      if (closed.has(nKey)) continue;
+      if (!waterPred.isWater(nLat, nLon)) continue;
+      if (!waterPred.edgeClear(cLat, cLon, nLat, nLon)) continue;
 
-      if (Math.abs(di) === 1 && Math.abs(dj) === 1) {
-        // Safeguard 1: no corner-cutting
-        const cardA = `${lats[ci + di]},${lons[cj]}`;
-        const cardB = `${lats[ci]},${lons[cj + dj]}`;
-        if (!waterCells.has(cardA) || !waterCells.has(cardB)) continue;
-        // Safeguard 2: midpoint must pass dual water check
-        const midLat = (cLat + lats[ni]) / 2;
-        const midLon = (cLon + lons[nj]) / 2;
-        if (!_isWater(midLat, midLon, oceanPolys, landPolys)) continue;
-      }
-
-      const edgeCost = (Math.abs(di) + Math.abs(dj) > 1 ? 1.414 : 1) * step;
+      const dLat = nLat - cLat, dLon = (nLon - cLon) * cosLat;
+      const edgeCost = Math.hypot(dLat, dLon);
       const ng = (g.get(cur) || 0) + edgeCost;
       if (ng < (g.get(nKey) ?? Infinity)) {
         from.set(nKey, cur); g.set(nKey, ng);
-        open.push(nKey, ng + h(lats[ni], lons[nj]));
+        open.push(nKey, ng + h(nLat, nLon));
       }
     }
   }
   return null;
 }
 
-// ─── Segment cross-check ──────────────────────────────────────────────────────
-
-function _checkSegment(la1, lo1, la2, lo2, oceanPolys, landPolys) {
-  const segLenKm = Math.hypot((la2-la1)*111, (lo2-lo1)*111*Math.cos(la1*Math.PI/180));
-  const n = Math.max(20, Math.min(500, Math.ceil(segLenKm * 1000 / 40)));
-  for (let k = 1; k <= n; k++) {
-    const t = k / (n + 1);
-    const lat = la1 + t * (la2 - la1);
-    const lon = lo1 + t * (lo2 - lo1);
-    if (!_isWater(lat, lon, oceanPolys, landPolys)) return { lat, lon, t };
-  }
-  return null;
-}
-
 // ─── Water-aware Douglas-Peucker simplification ───────────────────────────────
+// Every candidate collapsed chord is re-verified with the exact (non-raster)
+// check before being accepted — a 2-point leaf reached via recursion is
+// always a directly-adjacent pair from the raw A* path (already
+// raster-validated during search), so it's safe to return unchecked; the
+// risky case is the collapse branch below, which always re-checks before
+// collapsing.
 
 function _perp([la,lo],[la1,lo1],[la2,lo2]){const dx=la2-la1,dy=lo2-lo1,l2=dx*dx+dy*dy;if(!l2)return Math.hypot(la-la1,lo-lo1);const t=((la-la1)*dx+(lo-lo1)*dy)/l2;return Math.hypot(la-(la1+t*dx),lo-(lo1+t*dy));}
 
-function _simplify(pts, tol = 0.002, oceanPolys, landPolys) {
+function _simplify(pts, tol, oceanPolys, landPolys) {
   if (pts.length <= 2) return pts;
   let mx = 0, mi = 1;
   for (let i = 1; i < pts.length - 1; i++) {
     const d = _perp(pts[i], pts[0], pts[pts.length - 1]);
     if (d > mx) { mx = d; mi = i; }
   }
-  if (mx > tol || _checkSegment(pts[0][0], pts[0][1], pts[pts.length-1][0], pts[pts.length-1][1], oceanPolys, landPolys)) {
+  // Exact (non-raster) check, short-circuited: only actually runs once the
+  // chord has already passed the cheap deviation test, so it's paid at most
+  // once per surviving (near-final) chord, not on every recursive call.
+  if (mx > tol || !_exactEdgeClear(pts[0][0], pts[0][1], pts[pts.length-1][0], pts[pts.length-1][1], oceanPolys, landPolys)) {
     return [
       ..._simplify(pts.slice(0, mi + 1), tol, oceanPolys, landPolys).slice(0, -1),
       ..._simplify(pts.slice(mi), tol, oceanPolys, landPolys),
@@ -289,49 +369,56 @@ function _simplify(pts, tol = 0.002, oceanPolys, landPolys) {
 }
 
 // ─── Nearest water cell (directional-biased) ──────────────────────────────────
-// Expands outward in rings; scores by distance - 0.4 * cos(angle_toward_hint)
-// so that water cells on the side facing the destination are preferred over
-// equally-close cells on the far side of a barrier island.
+// Expands outward in grid rings, capped to a real-world search radius, scoring
+// by distance minus a bias toward the destination-facing side (so a barrier
+// island doesn't strand the snap on the wrong side of it). Returns null if
+// nothing is found within the cap — callers must NOT silently legitimize a
+// land point, unlike the previous implementation.
+//
+// The raster is a ~150-170m discretization of the coastline, so near a tight
+// or intricate shoreline it can occasionally disagree with the exact polygon
+// boundary by about one cell. That's fine for A* search (open water doesn't
+// care), but this is the literal point a route can start/end at, so each
+// ring's candidates are tried in score order against the exact check
+// (route-bbox-filtered, so it stays cheap) until one survives both — a ring
+// has at most a few dozen candidates.
 
-function _nearestWater(key, waterCells, lats, lons, hintLat, hintLon) {
-  if (waterCells.has(key)) return key;
-  const [cLat, cLon] = key.split(',').map(Number);
-  const ci = lats.findIndex(v => v === cLat);
-  const cj = lons.findIndex(v => v === cLon);
-  if (ci < 0 || cj < 0) return key;
+const NEAREST_WATER_MAX_M = 3000;
 
-  const dhLat = (hintLat ?? cLat) - cLat;
-  const dhLon = (hintLon ?? cLon) - cLon;
+function _nearestWater(lat, lon, hintLat, hintLon, waterPred, stepDeg, oceanPolys, landPolys) {
+  if (waterPred.isWater(lat, lon) && _isWaterPIP(lat, lon, oceanPolys, landPolys)) return { lat, lon };
+
+  const dhLat = (hintLat ?? lat) - lat;
+  const dhLon = (hintLon ?? lon) - lon;
   const dhLen = Math.hypot(dhLat, dhLon) || 1;
   const uhLat = dhLat / dhLen, uhLon = dhLon / dhLen;
 
-  let bestKey = null, bestScore = Infinity;
-  for (let r = 1; r <= 20; r++) {
+  const maxRing = Math.max(1, Math.ceil(NEAREST_WATER_MAX_M / (stepDeg * 111000)));
+  for (let r = 1; r <= maxRing; r++) {
+    const candidates = [];
     for (let di = -r; di <= r; di++) {
       for (let dj = -r; dj <= r; dj++) {
         if (Math.abs(di) !== r && Math.abs(dj) !== r) continue;
-        const ni = ci + di, nj = cj + dj;
-        if (ni < 0 || ni >= lats.length || nj < 0 || nj >= lons.length) continue;
-        const nKey = `${lats[ni]},${lons[nj]}`;
-        if (!waterCells.has(nKey)) continue;
+        const nLat = +(lat + di * stepDeg).toFixed(5);
+        const nLon = +(lon + dj * stepDeg).toFixed(5);
+        if (!waterPred.isWater(nLat, nLon)) continue;
         const dist = Math.hypot(di, dj);
         const dot  = (di * uhLat + dj * uhLon) / dist;
-        const score = dist - 0.4 * dot;
-        if (score < bestScore) { bestScore = score; bestKey = nKey; }
+        candidates.push({ lat: nLat, lon: nLon, score: dist - 0.4 * dot });
       }
     }
-    if (bestKey && r >= Math.ceil(bestScore)) break;
+    candidates.sort((a, b) => a.score - b.score);
+    for (const c of candidates) {
+      if (_isWaterPIP(c.lat, c.lon, oceanPolys, landPolys)) return { lat: c.lat, lon: c.lon };
+    }
   }
-  return bestKey ?? key;
+  return null;
 }
 
 // ─── Core routing ─────────────────────────────────────────────────────────────
 
 async function _waterRoute(fromLat, fromLon, toLat, toLon) {
-  const distKm = Math.hypot(
-    (toLat - fromLat) * 111,
-    (toLon - fromLon) * 111 * Math.cos(fromLat * Math.PI / 180)
-  );
+  const distKm = _haversineKm(fromLat, fromLon, toLat, toLon);
 
   const stepDeg = distKm < 15  ? 0.003
                 : distKm < 50  ? 0.005
@@ -352,54 +439,62 @@ async function _waterRoute(fromLat, fromLon, toLat, toLon) {
   for (let v = minLat; v <= maxLat + 1e-9; v = +(v + stepDeg).toFixed(5)) lats.push(v);
   for (let v = minLon; v <= maxLon + 1e-9; v = +(v + stepDeg).toFixed(5)) lons.push(v);
 
-  console.log(`A* grid: ${lats.length}×${lons.length}=${lats.length*lons.length} pts, step=${stepDeg}°, dist=${distKm.toFixed(0)}km`);
-
+  const waterPred = _makeWaterPredicate(minLat, minLon, maxLat, maxLon);
+  // Built regardless of raster/legacy mode: this is the route-bbox-filtered
+  // (cheap) polygon set used by every *exact* check below (endpoint snap
+  // verification, simplify chord verification, anchoring) — using the
+  // unfiltered global index there was the previous perf regression (each
+  // exact check would otherwise scan all 6837 land polygons).
   const oceanPolys = _buildRouteOcean(minLon, minLat, maxLon, maxLat);
   const landPolys  = _buildRouteLand(minLon, minLat, maxLon, maxLat);
+  console.log(`A* grid: ${lats.length}×${lons.length}=${lats.length*lons.length} pts, step=${stepDeg}°, dist=${distKm.toFixed(0)}km, mode=${waterPred.mode}`);
 
-  // Dual-constraint grid: water = in ocean polygon AND not in land polygon
+  const nearestLat = v => lats.reduce((a, b) => Math.abs(a - v) < Math.abs(b - v) ? a : b);
+  const nearestLon = v => lons.reduce((a, b) => Math.abs(a - v) < Math.abs(b - v) ? a : b);
+
   const t0 = Date.now();
-  const waterCells = new Set();
-  for (const lat of lats) {
-    for (const lon of lons) {
-      if (_isWater(lat, lon, oceanPolys, landPolys)) waterCells.add(`${lat},${lon}`);
-    }
+  const startSnap = _nearestWater(nearestLat(fromLat), nearestLon(fromLon), toLat, toLon, waterPred, stepDeg, oceanPolys, landPolys);
+  if (!startSnap) {
+    return { ok: false, code: 'NO_WATER_NEAR_ENDPOINT', message: 'No navigable water found near the departure point.' };
   }
-  console.log(`Grid classified in ${Date.now()-t0}ms. Water: ${waterCells.size}/${lats.length*lons.length}`);
-
-  const nearKey = (lat, lon) => {
-    const nL = lats.reduce((a, b) => Math.abs(a - lat) < Math.abs(b - lat) ? a : b);
-    const nO = lons.reduce((a, b) => Math.abs(a - lon) < Math.abs(b - lon) ? a : b);
-    return `${nL},${nO}`;
-  };
-
-  const startKey = _nearestWater(nearKey(fromLat, fromLon), waterCells, lats, lons, toLat,   toLon);
-  const endKey   = _nearestWater(nearKey(toLat,   toLon),   waterCells, lats, lons, fromLat, fromLon);
-
-  if (!waterCells.has(startKey)) waterCells.add(startKey);
-  if (!waterCells.has(endKey))   waterCells.add(endKey);
-
-  const routePath = _astar(waterCells, startKey, endKey, lats, lons, oceanPolys, landPolys);
-  if (!routePath || routePath.length < 2) {
-    console.warn('A* found no path — straight line fallback');
-    return [[fromLat, fromLon], [toLat, toLon]];
+  const endSnap = _nearestWater(nearestLat(toLat), nearestLon(toLon), fromLat, fromLon, waterPred, stepDeg, oceanPolys, landPolys);
+  if (!endSnap) {
+    return { ok: false, code: 'NO_WATER_NEAR_ENDPOINT', message: 'No navigable water found near the arrival point.' };
   }
 
-  const waypoints = _simplify(routePath.map(k => k.split(',').map(Number)), 0.002, oceanPolys, landPolys);
+  const rawPath = _astar(startSnap.lat, startSnap.lon, endSnap.lat, endSnap.lon, lats, lons, waterPred);
+  if (!rawPath || rawPath.length < 2) {
+    console.warn('A* found no path');
+    return { ok: false, code: 'NO_ROUTE_FOUND', message: 'No water route could be found between these points.' };
+  }
 
-  console.log(`Route: ${waypoints.length} waypoints`);
-  return waypoints;
+  let waypoints = _simplify(rawPath.map(k => k.split(',').map(Number)), 0.002, oceanPolys, landPolys);
+
+  // Endpoint anchoring: connect the literal requested pin if a clear straight
+  // segment exists to it, so the drawn route actually touches the marker
+  // instead of stopping short at the nearest grid-snapped water cell. Uses
+  // the exact (non-raster) check — see _exactEdgeClear above.
+  if (_exactEdgeClear(fromLat, fromLon, waypoints[0][0], waypoints[0][1], oceanPolys, landPolys)) {
+    waypoints[0] = [fromLat, fromLon];
+  }
+  const lastIdx = waypoints.length - 1;
+  if (_exactEdgeClear(toLat, toLon, waypoints[lastIdx][0], waypoints[lastIdx][1], oceanPolys, landPolys)) {
+    waypoints[lastIdx] = [toLat, toLon];
+  }
+
+  console.log(`Route: ${waypoints.length} waypoints in ${Date.now()-t0}ms`);
+  return { ok: true, waypoints, distanceNm: Math.round(_pathLengthNm(waypoints) * 10) / 10 };
 }
 
 // ─── Public ───────────────────────────────────────────────────────────────────
 
 async function computeMaritimeRoute(fromLat, fromLon, toLat, toLon) {
-  const waypoints = await _waterRoute(fromLat, fromLon, toLat, toLon);
-  return { fromSnapped: null, toSnapped: null, waypoints };
+  return _waterRoute(fromLat, fromLon, toLat, toLon);
 }
 
-// Pre-load both indexes at startup
+// Pre-load at startup (legacy indexes stay needed for the out-of-region fallback path).
 _loadOceanIndex();
 _loadLandIndex();
+waterRaster.preload();
 
 module.exports = { computeMaritimeRoute };

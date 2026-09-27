@@ -1,5 +1,7 @@
 require('dotenv').config();
 const http    = require('http');
+const fs      = require('fs');
+const path    = require('path');
 const express = require('express');
 const cors    = require('cors');
 const { Server: SocketServer } = require('socket.io');
@@ -11,6 +13,25 @@ const maritime = require('./src/maritime');
 const noaa     = require('./src/noaa');
 
 noaa.loadStaticData();
+noaa.loadCurrentStations().catch(e => console.warn('Current stations pre-load:', e.message));
+noaa.loadTideStations().catch(e => console.warn('Tide stations pre-load:', e.message));
+
+// ── Hazard store ─────────────────────────────────────────────────────────────
+const HAZARDS_FILE = path.join(__dirname, 'data', 'hazards.json');
+function loadHazards() {
+  try { return JSON.parse(fs.readFileSync(HAZARDS_FILE, 'utf8')); }
+  catch { return []; }
+}
+function saveHazards(arr) {
+  fs.writeFileSync(HAZARDS_FILE, JSON.stringify(arr, null, 2));
+}
+let hazardStore = loadHazards();
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371, d2r = Math.PI / 180;
+  const dLat = (lat2-lat1)*d2r, dLon = (lon2-lon1)*d2r;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*d2r)*Math.cos(lat2*d2r)*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
 
 // In-memory store: email -> { code, expires }
 const resetCodes = new Map();
@@ -339,7 +360,10 @@ app.post('/api/maritime-route', async (req, res) => {
       parseFloat(fromLat), parseFloat(fromLon),
       parseFloat(toLat),   parseFloat(toLon)
     );
-    res.json(result);
+    if (!result.ok) {
+      return res.status(422).json({ error: result.message, code: result.code });
+    }
+    res.json({ waypoints: result.waypoints, distanceNm: result.distanceNm });
   } catch (err) {
     console.error('maritime-route error', err);
     res.status(500).json({ error: 'maritime routing failed', message: err.message });
@@ -495,6 +519,451 @@ app.get('/api/noaa/buoys/:stationId/obs', async (req, res) => {
     res.json(obs);
   } catch (err) {
     res.status(502).json({ error: `NDBC fetch failed: ${err.message}` });
+  }
+});
+
+// ── Fuel Log ─────────────────────────────────────────────────────────────────
+const FUEL_LOG_FILE = path.join(__dirname, 'data', 'fuel_logs.json');
+function loadFuelLogs() {
+  try { return JSON.parse(fs.readFileSync(FUEL_LOG_FILE, 'utf8')); }
+  catch { return []; }
+}
+function saveFuelLogs(arr) { fs.writeFileSync(FUEL_LOG_FILE, JSON.stringify(arr, null, 2)); }
+let fuelLogStore = loadFuelLogs();
+
+app.get('/api/fuel', requireAuth, (req, res) => {
+  const { boatId } = req.query;
+  const entries = fuelLogStore.filter(e => e.userId === req.user.id && (!boatId || e.boatId === boatId));
+  res.json(entries.sort((a, b) => new Date(b.date) - new Date(a.date)));
+});
+
+app.post('/api/fuel', requireAuth, (req, res) => {
+  const { boatId, gallons, pricePerGal, locationName, lat, lon, note, fillToFull } = req.body;
+  if (!gallons || gallons <= 0) return res.status(400).json({ error: 'gallons required' });
+  const entry = {
+    id:           Date.now().toString(),
+    userId:       req.user.id,
+    boatId:       boatId || null,
+    gallons:      parseFloat(gallons),
+    pricePerGal:  pricePerGal ? parseFloat(pricePerGal) : null,
+    totalCost:    pricePerGal ? Math.round(parseFloat(gallons) * parseFloat(pricePerGal) * 100) / 100 : null,
+    locationName: locationName || null,
+    lat:          lat ? parseFloat(lat) : null,
+    lon:          lon ? parseFloat(lon) : null,
+    note:         (note || '').slice(0, 200),
+    fillToFull:   !!fillToFull,
+    date:         new Date().toISOString(),
+  };
+  fuelLogStore.push(entry);
+  saveFuelLogs(fuelLogStore);
+  res.status(201).json(entry);
+});
+
+app.delete('/api/fuel/:id', requireAuth, (req, res) => {
+  const idx = fuelLogStore.findIndex(e => e.id === req.params.id && e.userId === req.user.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  fuelLogStore.splice(idx, 1);
+  saveFuelLogs(fuelLogStore);
+  res.json({ ok: true });
+});
+
+// ── Trip Logs ────────────────────────────────────────────────────────────────
+
+const TRIP_LOG_FILE = path.join(__dirname, 'data', 'trip_logs.json');
+function loadTripLogs() {
+  try { return JSON.parse(fs.readFileSync(TRIP_LOG_FILE, 'utf8')); }
+  catch { return []; }
+}
+function saveTripLogs(arr) { fs.writeFileSync(TRIP_LOG_FILE, JSON.stringify(arr, null, 2)); }
+let tripLogStore = loadTripLogs();
+
+// List logs for user (strip heavy track array for list view)
+app.get('/api/trip-logs', requireAuth, (req, res) => {
+  const logs = tripLogStore
+    .filter(l => l.userId === req.user.id)
+    .map(({ track, ...rest }) => rest)
+    .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
+  res.json(logs);
+});
+
+// Get full log including track
+app.get('/api/trip-logs/:id', requireAuth, (req, res) => {
+  const log = tripLogStore.find(l => l.id === req.params.id && l.userId === req.user.id);
+  if (!log) return res.status(404).json({ error: 'Not found' });
+  res.json(log);
+});
+
+// Save completed trip log
+app.post('/api/trip-logs', requireAuth, (req, res) => {
+  const { name, startedAt, endedAt, durationMin, distanceNm, maxSpeedKt, avgSpeedKt, track, boatId, boatName } = req.body;
+  if (!startedAt || !track?.length) return res.status(400).json({ error: 'startedAt and track required' });
+  const log = {
+    id: `tl_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+    userId: req.user.id,
+    name: name || `Trip ${new Date(startedAt).toLocaleDateString()}`,
+    startedAt, endedAt, durationMin: durationMin || 0,
+    distanceNm: distanceNm || 0, maxSpeedKt: maxSpeedKt || 0, avgSpeedKt: avgSpeedKt || 0,
+    boatId: boatId || null, boatName: boatName || null,
+    track: track || [],
+    createdAt: new Date().toISOString(),
+  };
+  tripLogStore.push(log);
+  saveTripLogs(tripLogStore);
+  res.status(201).json(log);
+});
+
+// Rename a trip log
+app.patch('/api/trip-logs/:id', requireAuth, (req, res) => {
+  const log = tripLogStore.find(l => l.id === req.params.id && l.userId === req.user.id);
+  if (!log) return res.status(404).json({ error: 'Not found' });
+  if (req.body.name) log.name = req.body.name.trim().slice(0, 80);
+  saveTripLogs(tripLogStore);
+  res.json({ ok: true });
+});
+
+app.delete('/api/trip-logs/:id', requireAuth, (req, res) => {
+  const idx = tripLogStore.findIndex(l => l.id === req.params.id && l.userId === req.user.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  tripLogStore.splice(idx, 1);
+  saveTripLogs(tripLogStore);
+  res.json({ ok: true });
+});
+
+// ── Community Hazard Reports ─────────────────────────────────────────────────
+
+app.get('/api/hazards', (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lon = parseFloat(req.query.lon);
+  const radius = parseFloat(req.query.radius) || 100;
+  if (!isNaN(lat) && !isNaN(lon)) {
+    const near = hazardStore
+      .map(h => ({ ...h, dist_km: Math.round(haversineKm(lat, lon, h.lat, h.lon) * 10) / 10 }))
+      .filter(h => h.dist_km <= radius)
+      .sort((a, b) => a.dist_km - b.dist_km);
+    return res.json(near);
+  }
+  res.json(hazardStore);
+});
+
+app.post('/api/hazards', requireAuth, (req, res) => {
+  const { lat, lon, type, description } = req.body;
+  if (!lat || !lon || !type) return res.status(400).json({ error: 'lat, lon, type required' });
+  const hazard = {
+    id:          Date.now().toString(),
+    lat:         parseFloat(lat),
+    lon:         parseFloat(lon),
+    type,
+    description: (description || '').slice(0, 300),
+    reportedBy:  req.user?.name || 'Anonymous',
+    reportedAt:  new Date().toISOString(),
+    upvotes:     0,
+  };
+  hazardStore.push(hazard);
+  saveHazards(hazardStore);
+  res.status(201).json(hazard);
+});
+
+app.post('/api/hazards/:id/upvote', requireAuth, (req, res) => {
+  const h = hazardStore.find(x => x.id === req.params.id);
+  if (!h) return res.status(404).json({ error: 'Not found' });
+  h.upvotes = (h.upvotes || 0) + 1;
+  saveHazards(hazardStore);
+  res.json(h);
+});
+
+app.delete('/api/hazards/:id', requireAuth, (req, res) => {
+  const idx = hazardStore.findIndex(x => x.id === req.params.id && x.reportedBy === req.user?.name);
+  if (idx === -1) return res.status(404).json({ error: 'Not found or not your report' });
+  hazardStore.splice(idx, 1);
+  saveHazards(hazardStore);
+  res.json({ ok: true });
+});
+
+// Active NWS weather alerts near a point
+app.get('/api/noaa/alerts', async (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lon = parseFloat(req.query.lon);
+  if (isNaN(lat) || isNaN(lon)) return res.status(400).json({ error: 'lat/lon required' });
+  try {
+    const alerts = await noaa.getActiveAlerts(lat, lon);
+    res.json(alerts);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// NWS hourly forecast for a point
+app.get('/api/noaa/forecast', async (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lon = parseFloat(req.query.lon);
+  if (isNaN(lat) || isNaN(lon)) return res.status(400).json({ error: 'lat/lon required' });
+  try {
+    const periods = await noaa.getHourlyForecast(lat, lon);
+    res.json(periods.slice(0, 24));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// NOAA tide predictions for nearest station
+app.get('/api/noaa/tides', async (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lon = parseFloat(req.query.lon);
+  if (isNaN(lat) || isNaN(lon)) return res.status(400).json({ error: 'lat/lon required' });
+  const station = noaa.getNearestStation(lat, lon);
+  if (!station?.station) return res.status(404).json({ error: 'No tide station near this location' });
+  const today    = new Date();
+  const tomorrow = new Date(today.getTime() + 2 * 86400000);
+  try {
+    const preds = await noaa.getTidePredictions(station.station, noaa.formatDate(today), noaa.formatDate(tomorrow));
+    res.json({ station: station.name, stationId: station.station, predictions: preds });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.get('/api/noaa/currents', async (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lon = parseFloat(req.query.lon);
+  const n   = Math.min(parseInt(req.query.n) || 8, 15);
+  if (isNaN(lat) || isNaN(lon)) return res.status(400).json({ error: 'lat/lon required' });
+  await noaa.loadCurrentStations();
+  const nearby = noaa.getNearestCurrentStations(lat, lon, n);
+  if (!nearby.length) return res.json([]);
+  const results = await Promise.allSettled(nearby.map(async s => {
+    const current = await noaa.fetchCurrentNow(s.id);
+    return current ? { ...s, ...current } : null;
+  }));
+  res.json(results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean));
+});
+
+// ── Tide gauge ───────────────────────────────────────────────────────────────
+const tideGaugeCache = new Map(); // stationId → { data, ts }
+
+app.get('/api/noaa/tides/gauge', async (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lon = parseFloat(req.query.lon);
+  if (isNaN(lat) || isNaN(lon)) return res.status(400).json({ error: 'lat/lon required' });
+
+  await noaa.loadTideStations();
+  const station = noaa.getNearestTideStation(lat, lon);
+  if (!station?.id) return res.status(404).json({ error: 'No tide station found' });
+
+  const cached = tideGaugeCache.get(station.id);
+  if (cached && Date.now() - cached.ts < 5 * 60000) return res.json(cached.data);
+
+  const today    = noaa.formatDate(new Date());
+  const tomorrow = noaa.formatDate(new Date(Date.now() + 86400000));
+
+  try {
+    const base = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter`;
+    const common = `&datum=MLLW&station=${station.id}&time_zone=lst_ldt&units=english&format=json`;
+
+    const [obsRes, predRes, hiloRes] = await Promise.all([
+      fetch(`${base}?product=water_level${common}&date=today`, { headers: { 'User-Agent': 'SafeSeas/1.0' } }),
+      fetch(`${base}?product=predictions${common}&begin_date=${today}&end_date=${today}&interval=h`, { headers: { 'User-Agent': 'SafeSeas/1.0' } }),
+      fetch(`${base}?product=predictions${common}&begin_date=${today}&end_date=${tomorrow}&interval=hilo`, { headers: { 'User-Agent': 'SafeSeas/1.0' } }),
+    ]);
+
+    // Observed water level (real-time — may not exist for all stations)
+    let currentFt = null, trend = 'unknown';
+    try {
+      const obsJson = await obsRes.json();
+      const obs = obsJson.data || [];
+      if (obs.length >= 2) {
+        currentFt = parseFloat(obs[obs.length - 1].v);
+        const prevFt = parseFloat(obs[obs.length - 2].v);
+        trend = currentFt > prevFt + 0.04 ? 'rising' : currentFt < prevFt - 0.04 ? 'falling' : 'steady';
+      } else if (obs.length === 1) {
+        currentFt = parseFloat(obs[0].v);
+      }
+    } catch {}
+
+    // Hourly predictions for chart
+    const predJson = await predRes.json();
+    const predictions = (predJson.predictions || []).map(p => ({ t: p.t, v: parseFloat(p.v) }));
+
+    // If no real-time, interpolate current from predictions
+    if (currentFt == null && predictions.length) {
+      const now = new Date();
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      let closest = predictions[0], closestDiff = Infinity;
+      for (const p of predictions) {
+        const [, time] = p.t.split(' ');
+        const [h, m] = time.split(':').map(Number);
+        const diff = Math.abs(h * 60 + m - nowMin);
+        if (diff < closestDiff) { closestDiff = diff; closest = p; }
+      }
+      currentFt = closest.v;
+    }
+
+    // Hi/Lo predictions
+    const hiloJson = await hiloRes.json();
+    const now = new Date();
+    const hilos = (hiloJson.predictions || []).map(p => ({ t: p.t, v: parseFloat(p.v), type: p.type }));
+    const future = hilos.filter(p => {
+      const [date, time] = p.t.split(' ');
+      const d = new Date(`${date}T${time}:00`);
+      return d > now;
+    });
+    const nextHigh = future.find(p => p.type === 'H') ?? null;
+    const nextLow  = future.find(p => p.type === 'L') ?? null;
+
+    const data = { station, currentFt, trend, predictions, hilos, nextHigh, nextLow, fetchedAt: new Date().toISOString() };
+    tideGaugeCache.set(station.id, { data, ts: Date.now() });
+    res.json(data);
+  } catch (e) {
+    console.warn('Tide gauge error:', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── Wind grid (Open-Meteo) ────────────────────────────────────────────────────
+const windGridCache = new Map(); // cacheKey → { data, ts }
+
+app.get('/api/weather/wind', async (req, res) => {
+  const lat  = parseFloat(req.query.lat);
+  const lon  = parseFloat(req.query.lon);
+  const zoom = parseFloat(req.query.zoom) || 10;
+  if (isNaN(lat) || isNaN(lon)) return res.status(400).json({ error: 'lat/lon required' });
+
+  const spacing = zoom >= 13 ? 0.08 : zoom >= 11 ? 0.18 : 0.40;
+  const half    = 2; // 5×5 grid
+
+  const snapLat  = Math.round(lat / spacing) * spacing;
+  const snapLon  = Math.round(lon / spacing) * spacing;
+  const cacheKey = `${snapLat.toFixed(3)},${snapLon.toFixed(3)},${spacing}`;
+  const cached   = windGridCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < 15 * 60000) return res.json(cached.data);
+
+  const lats = [], lons = [];
+  for (let i = -half; i <= half; i++) {
+    for (let j = -half; j <= half; j++) {
+      lats.push((lat + i * spacing).toFixed(4));
+      lons.push((lon + j * spacing).toFixed(4));
+    }
+  }
+
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?` +
+      `latitude=${lats.join(',')}&longitude=${lons.join(',')}&` +
+      `hourly=windspeed_10m,winddirection_10m,windgusts_10m&` +
+      `windspeed_unit=kn&forecast_days=1&timezone=UTC`;
+    const r = await fetch(url, { headers: { 'User-Agent': 'SafeSeas/1.0' } });
+    if (!r.ok) return res.status(502).json({ error: 'Open-Meteo error' });
+    const raw = await r.json();
+
+    const nowStr = new Date().toISOString().slice(0, 13) + ':00';
+    const arr    = Array.isArray(raw) ? raw : [raw];
+    const results = arr.map((d, i) => {
+      const times = d.hourly?.time ?? [];
+      let idx = times.indexOf(nowStr);
+      if (idx < 0) idx = 0;
+      const spd  = d.hourly?.windspeed_10m?.[idx];
+      const dir  = d.hourly?.winddirection_10m?.[idx];
+      const gust = d.hourly?.windgusts_10m?.[idx];
+      if (spd == null || dir == null) return null;
+      return {
+        lat: parseFloat(lats[i]), lon: parseFloat(lons[i]),
+        speedKt: Math.round(spd  * 10) / 10,
+        dirDeg:  Math.round(dir),
+        gustKt:  gust != null ? Math.round(gust * 10) / 10 : null,
+      };
+    }).filter(Boolean);
+
+    windGridCache.set(cacheKey, { data: results, ts: Date.now() });
+    res.json(results);
+  } catch (e) {
+    console.warn('Wind fetch error:', e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ── Wave forecast (Open-Meteo Marine) ────────────────────────────────────────
+const waveCache = new Map(); // cacheKey → { data, ts }
+
+app.get('/api/marine/waves', async (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lon = parseFloat(req.query.lon);
+  if (isNaN(lat) || isNaN(lon)) return res.status(400).json({ error: 'lat/lon required' });
+
+  const key = `${(Math.round(lat * 10) / 10).toFixed(1)},${(Math.round(lon * 10) / 10).toFixed(1)}`;
+  const cached = waveCache.get(key);
+  if (cached && Date.now() - cached.ts < 60 * 60000) return res.json(cached.data);
+
+  try {
+    const url = `https://marine-api.open-meteo.com/v1/marine?` +
+      `latitude=${lat}&longitude=${lon}&` +
+      `hourly=wave_height,wave_direction,wave_period,wind_wave_height,swell_wave_height,swell_wave_direction,swell_wave_period&` +
+      `forecast_days=7&timezone=auto`;
+    const r = await fetch(url, { headers: { 'User-Agent': 'SafeSeas/1.0' } });
+    if (!r.ok) return res.status(502).json({ error: 'Marine API unavailable' });
+    const raw = await r.json();
+
+    if (!raw.hourly?.time) return res.status(404).json({ error: 'No wave data for this location' });
+
+    const times  = raw.hourly.time;
+    const waveH  = raw.hourly.wave_height;
+    const waveD  = raw.hourly.wave_direction;
+    const waveP  = raw.hourly.wave_period;
+    const swellH = raw.hourly.swell_wave_height;
+    const swellD = raw.hourly.swell_wave_direction;
+    const swellP = raw.hourly.swell_wave_period;
+
+    const toFt  = m => m != null ? Math.round(m * 3.281 * 10) / 10 : null;
+    const getStatus = ft => ft == null ? 'go' : ft < 2 ? 'go' : ft < 4 ? 'caution' : 'nogo';
+
+    const nowPrefix = new Date().toISOString().slice(0, 13);
+    let nowIdx = times.findIndex(t => t.startsWith(nowPrefix));
+    if (nowIdx < 0) nowIdx = 0;
+
+    const current = {
+      waveHeightFt: toFt(waveH[nowIdx]),
+      wavePeriodS:  waveP[nowIdx] != null ? Math.round(waveP[nowIdx]) : null,
+      waveDir:      waveD[nowIdx] != null ? Math.round(waveD[nowIdx]) : null,
+      swellHeightFt: toFt(swellH[nowIdx]),
+      swellDir:      swellD[nowIdx] != null ? Math.round(swellD[nowIdx]) : null,
+      swellPeriodS:  swellP[nowIdx] != null ? Math.round(swellP[nowIdx]) : null,
+      status: getStatus(toFt(waveH[nowIdx])),
+    };
+
+    // Group hourly into days
+    const dayMap = {};
+    times.forEach((t, i) => {
+      const date = t.slice(0, 10);
+      if (!dayMap[date]) dayMap[date] = [];
+      dayMap[date].push({
+        t, hour: parseInt(t.slice(11, 13)),
+        waveHeightFt:  toFt(waveH[i]),
+        wavePeriodS:   waveP[i]  != null ? Math.round(waveP[i])  : null,
+        waveDir:       waveD[i]  != null ? Math.round(waveD[i])  : null,
+        swellHeightFt: toFt(swellH[i]),
+        swellDir:      swellD[i] != null ? Math.round(swellD[i]) : null,
+        swellPeriodS:  swellP[i] != null ? Math.round(swellP[i]) : null,
+      });
+    });
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const daily = Object.entries(dayMap).map(([date, hours], idx) => {
+      const validH  = hours.map(h => h.waveHeightFt).filter(v => v != null);
+      const maxFt   = validH.length ? Math.round(Math.max(...validH) * 10) / 10 : null;
+      const avgFt   = validH.length ? Math.round(validH.reduce((a, b) => a + b, 0) / validH.length * 10) / 10 : null;
+      const periods = hours.map(h => h.wavePeriodS).filter(Boolean);
+      const avgPeriod = periods.length ? Math.round(periods.reduce((a, b) => a + b, 0) / periods.length) : null;
+      const dirs      = hours.map(h => h.waveDir).filter(v => v != null);
+      const dominantDir = dirs.length ? Math.round(dirs.reduce((a, b) => a + b, 0) / dirs.length) : null;
+      const d = new Date(date + 'T12:00:00');
+      const dayLabel  = date === todayStr ? 'Today' : idx === 1 ? 'Tomorrow' : d.toLocaleDateString('en-US', { weekday: 'short' });
+      const dateLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return { date, dayLabel, dateLabel, maxFt, avgFt, avgPeriodS: avgPeriod, dominantDir, status: getStatus(maxFt), hours };
+    });
+
+    const data = { current, daily, fetchedAt: new Date().toISOString() };
+    waveCache.set(key, { data, ts: Date.now() });
+    res.json(data);
+  } catch (e) {
+    console.warn('Wave forecast error:', e.message);
+    res.status(502).json({ error: e.message });
   }
 });
 

@@ -20,9 +20,9 @@ const ACCENT_OPTIONS = {
 };
 
 const STATUS = {
-  go:    { bg: '#0F3D2E', fg: '#34E0A0', border: '#1F6B4D', label: 'SAFE TO GO' },
-  wait:  { bg: '#3F2E0A', fg: '#F5B547', border: '#7A5A18', label: 'WAIT' },
-  nogo:  { bg: '#3F1418', fg: '#FF6B6B', border: '#7A2530', label: 'NO-GO' },
+  go:    { bg: '#ECFDF5', fg: '#15803D', border: '#86EFAC', label: 'SAFE TO GO' },
+  wait:  { bg: '#FFFBEB', fg: '#B45309', border: '#FCD34D', label: 'WAIT' },
+  nogo:  { bg: '#FEF2F2', fg: '#B91C1C', border: '#FCA5A5', label: 'NO-GO' },
 };
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -213,12 +213,231 @@ function BoatArt({ type, color = 'var(--c-text)', size = 80 }) {
 const AISSTREAM_KEY = import.meta.env.VITE_AISSTREAM_KEY || '';
 
 function _vesselColor(typeCode) {
-  if (typeCode >= 60 && typeCode <= 69) return '#4ADE80';
-  if (typeCode >= 70 && typeCode <= 79) return '#38BDF8';
-  if (typeCode >= 80 && typeCode <= 89) return '#F87171';
-  if (typeCode === 30)                  return '#FB923C';
-  if (typeCode === 36 || typeCode === 37) return '#818CF8';
+  if (typeCode >= 60 && typeCode <= 69) return '#4ADE80';   // Passenger — green
+  if (typeCode >= 70 && typeCode <= 79) return '#38BDF8';   // Cargo — blue
+  if (typeCode >= 80 && typeCode <= 89) return '#F87171';   // Tanker — red
+  if (typeCode === 30)                  return '#FB923C';   // Fishing — orange
+  if (typeCode === 36 || typeCode === 37) return '#818CF8'; // Sailing/Pleasure — purple
   return '#94A3B8';
+}
+
+function _vesselTypeName(typeCode) {
+  if (!typeCode) return 'Unknown';
+  if (typeCode === 30) return 'Fishing';
+  if (typeCode === 31 || typeCode === 32) return 'Towing';
+  if (typeCode === 33) return 'Dredging';
+  if (typeCode === 34) return 'Diving ops';
+  if (typeCode === 35) return 'Military';
+  if (typeCode === 36) return 'Sailing';
+  if (typeCode === 37) return 'Pleasure craft';
+  if (typeCode >= 40 && typeCode <= 49) return 'High-speed craft';
+  if (typeCode >= 50 && typeCode <= 59) return 'Special craft';
+  if (typeCode >= 60 && typeCode <= 69) return 'Passenger';
+  if (typeCode >= 70 && typeCode <= 79) return 'Cargo';
+  if (typeCode >= 80 && typeCode <= 89) return 'Tanker';
+  if (typeCode >= 90 && typeCode <= 99) return 'Other';
+  return `Type ${typeCode}`;
+}
+
+function _mmsiToFlag(mmsi) {
+  const mid = String(mmsi).slice(0, 3);
+  const F = {
+    '303':'🇺🇸','338':'🇺🇸','366':'🇺🇸','367':'🇺🇸','368':'🇺🇸','369':'🇺🇸','379':'🇺🇸',
+    '316':'🇨🇦',
+    '219':'🇩🇰','220':'🇩🇰',
+    '232':'🇬🇧','233':'🇬🇧','234':'🇬🇧','235':'🇬🇧',
+    '211':'🇩🇪','218':'🇩🇪',
+    '226':'🇫🇷','227':'🇫🇷','228':'🇫🇷',
+    '247':'🇮🇹',
+    '257':'🇳🇴','258':'🇳🇴','259':'🇳🇴',
+    '265':'🇸🇪','266':'🇸🇪',
+    '273':'🇷🇺',
+    '308':'🇧🇸','309':'🇧🇸','311':'🇧🇸','377':'🇧🇸',
+    '319':'🇰🇾',
+    '339':'🇲🇭',
+    '351':'🇵🇦','352':'🇵🇦','353':'🇵🇦','354':'🇵🇦','355':'🇵🇦','356':'🇵🇦','357':'🇵🇦',
+    '370':'🇵🇦','371':'🇵🇦','372':'🇵🇦','373':'🇵🇦',
+    '374':'🇹🇹','376':'🇻🇮','378':'🇻🇬',
+    '215':'🇲🇹','249':'🇲🇹',
+    '431':'🇯🇵','432':'🇯🇵',
+    '440':'🇰🇷','441':'🇰🇷',
+    '477':'🇭🇰',
+    '410':'🇨🇳','412':'🇨🇳','413':'🇨🇳',
+    '563':'🇸🇬','564':'🇸🇬','565':'🇸🇬','566':'🇸🇬','567':'🇸🇬',
+    '525':'🇮🇩',
+    '636':'🇱🇷',
+    '710':'🇧🇷','711':'🇧🇷',
+    '503':'🇦🇺','512':'🇳🇿',
+  };
+  return F[mid] ?? '🏴';
+}
+
+// ── Vessel Detail Panel ───────────────────────────────────────────────────────
+function VesselDetailPanel({ vessel, userPos, accent, onClose }) {
+  if (!vessel) return null;
+
+  const typeColor = _vesselColor(vessel.shipType);
+  const typeName  = vessel.shipType > 0 ? _vesselTypeName(vessel.shipType) : null;
+  const flag      = _mmsiToFlag(vessel.mmsi);
+
+  const cpa     = (userPos && (vessel.sog ?? 0) > 0.2)
+    ? _computeCPA(userPos.lat, userPos.lng, 0, 0, vessel.lat, vessel.lng, vessel.sog || 0, vessel.cog || 0)
+    : null;
+  const curDist = userPos ? _haversineNm(userPos.lat, userPos.lng, vessel.lat, vessel.lng) : null;
+  const cpaWarn    = cpa && cpa.dNm < 0.5 && cpa.tMin > 0 && cpa.tMin < 20;
+  const cpaCaution = cpa && cpa.dNm < 1.0 && cpa.tMin > 0 && cpa.tMin < 30;
+
+  const ageS   = vessel.updatedAt ? Math.round((Date.now() - vessel.updatedAt) / 1000) : null;
+  const ageStr = ageS == null ? null : ageS < 60 ? `${ageS}s ago` : `${Math.floor(ageS / 60)}m ago`;
+
+  const history = vessel.speedHistory || [];
+  const speeds  = history.map(h => h.sog);
+  const maxSpd  = Math.max(...speeds, 0.5);
+
+  const SLabel = { fontSize: 9.5, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 };
+  const SVal   = { fontSize: 14, fontWeight: 700, color: '#0F172A' };
+  const SUnit  = { fontSize: 11.5, fontWeight: 500, color: '#64748B', marginLeft: 3 };
+  const SDivider = { borderTop: '1px solid #F1F5F9', margin: '0 0 12px 0' };
+
+  const compassPt = (deg) => {
+    if (deg == null) return '';
+    const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return dirs[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+  };
+
+  return (
+    <div style={{
+      position: 'absolute', right: 0, top: 0, bottom: 0, width: 284,
+      background: 'white', borderLeft: '1px solid #E2E8F0',
+      boxShadow: '-6px 0 20px rgba(0,0,0,0.13)',
+      display: 'flex', flexDirection: 'column', zIndex: 600,
+      fontFamily: 'Inter, system-ui, sans-serif', overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <div style={{ padding: '14px 14px 12px', borderBottom: '1px solid #F1F5F9', flexShrink: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: '#0F172A', lineHeight: 1.2, marginBottom: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {flag} {vessel.name}
+            </div>
+            {typeName && (
+              <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, color: typeColor, background: `${typeColor}18`, border: `1px solid ${typeColor}44`, borderRadius: 99, padding: '2px 9px' }}>
+                {typeName}
+              </span>
+            )}
+          </div>
+          <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, background: '#F1F5F9', color: '#64748B', fontSize: 15, flexShrink: 0 }}>✕</button>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '14px 14px 24px' }}>
+
+        {/* Speed / Course / Distance */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 6px', marginBottom: 14 }}>
+          <div>
+            <div style={SLabel}>Speed</div>
+            <div style={SVal}>{vessel.sog?.toFixed(1) ?? '—'}<span style={SUnit}>kt</span></div>
+          </div>
+          <div>
+            <div style={SLabel}>Course</div>
+            <div style={SVal}>{vessel.cog != null ? `${Math.round(vessel.cog)}°` : '—'}<span style={SUnit}>{compassPt(vessel.cog)}</span></div>
+          </div>
+          {curDist != null && (
+            <div>
+              <div style={SLabel}>Distance</div>
+              <div style={SVal}>{curDist.toFixed(2)}<span style={SUnit}>nm</span></div>
+            </div>
+          )}
+          {ageStr && (
+            <div>
+              <div style={SLabel}>Updated</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: ageS > 120 ? '#F59E0B' : '#64748B' }}>{ageStr}</div>
+            </div>
+          )}
+        </div>
+
+        {/* Speed sparkline */}
+        {speeds.length > 2 && (() => {
+          const W = 256, H = 36;
+          const pts = speeds.map((s, i) => `${((i / (speeds.length - 1)) * W).toFixed(1)},${(H - (s / maxSpd) * H).toFixed(1)}`).join(' ');
+          const lastX = W, lastY = H - (speeds[speeds.length - 1] / maxSpd) * H;
+          return (
+            <div style={{ marginBottom: 14 }}>
+              <div style={SLabel}>Speed History</div>
+              <svg width={W} height={H + 2} viewBox={`0 0 ${W} ${H + 2}`} style={{ display: 'block' }}>
+                <polyline points={pts} fill="none" stroke={accent} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.75"/>
+                <circle cx={lastX} cy={lastY} r="3.5" fill={accent}/>
+              </svg>
+            </div>
+          );
+        })()}
+
+        <div style={SDivider}/>
+
+        {/* Vessel info */}
+        <div style={{ fontSize: 10, fontWeight: 700, color: '#94A3B8', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>Vessel Info</div>
+        {[
+          { label: 'MMSI',     val: vessel.mmsi },
+          vessel.imo > 0    && { label: 'IMO',      val: vessel.imo },
+          vessel.callsign   && { label: 'Callsign', val: vessel.callsign },
+          vessel.dimLength > 0 && { label: 'Length', val: `${vessel.dimLength} m` },
+        ].filter(Boolean).map(({ label, val }) => (
+          <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #F8FAFC' }}>
+            <span style={{ fontSize: 12, color: '#94A3B8' }}>{label}</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#334155' }}>{val}</span>
+          </div>
+        ))}
+
+        {/* Destination */}
+        {vessel.destination && (
+          <div style={{ marginTop: 14 }}>
+            <div style={SDivider}/>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#94A3B8', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6 }}>Destination</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#0F172A' }}>{vessel.destination}</div>
+          </div>
+        )}
+
+        {/* CPA */}
+        {cpa && (
+          <div style={{ marginTop: 14 }}>
+            <div style={SDivider}/>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#94A3B8', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>Collision Risk (CPA)</div>
+            <div style={{ background: cpaWarn ? '#FEF2F2' : cpaCaution ? '#FFFBEB' : '#F0FDF4', borderRadius: 10, padding: '10px 12px', border: `1px solid ${cpaWarn ? '#FCA5A5' : cpaCaution ? '#FCD34D' : '#86EFAC'}` }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: cpaWarn ? '#DC2626' : cpaCaution ? '#D97706' : '#16A34A', marginBottom: cpa.tMin < 120 ? 4 : 0 }}>
+                {cpaWarn ? '⚠ Close Approach' : cpaCaution ? '⚡ Caution' : '✓ Clear'}
+              </div>
+              {cpa.tMin < 120 && (
+                <div style={{ fontSize: 12, color: '#475569' }}>
+                  CPA {cpa.dNm.toFixed(2)} nm · in {Math.round(cpa.tMin)} min
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+// Returns { tMin: minutes to CPA, dNm: nm at CPA }
+function _computeCPA(myLat, myLon, mySpeedKt, myCog, vLat, vLon, vSpeedKt, vCog) {
+  const toRad = d => d * Math.PI / 180;
+  const cosLat = Math.cos(toRad((myLat + vLat) / 2));
+  const dx = (vLon - myLon) * 60 * cosLat;
+  const dy = (vLat  - myLat) * 60;
+  const myVx = (mySpeedKt || 0) * Math.sin(toRad(myCog || 0));
+  const myVy = (mySpeedKt || 0) * Math.cos(toRad(myCog || 0));
+  const vVx  = (vSpeedKt  || 0) * Math.sin(toRad(vCog  || 0));
+  const vVy  = (vSpeedKt  || 0) * Math.cos(toRad(vCog  || 0));
+  const rvx = vVx - myVx, rvy = vVy - myVy;
+  const relSpdSq = rvx*rvx + rvy*rvy;
+  const curDist = Math.sqrt(dx*dx + dy*dy);
+  if (relSpdSq < 0.001) return { tMin: Infinity, dNm: curDist };
+  const tHr = -(dx*rvx + dy*rvy) / relSpdSq;
+  if (tHr <= 0) return { tMin: 0, dNm: curDist };
+  const cpaDx = dx + rvx*tHr, cpaDy = dy + rvy*tHr;
+  return { tMin: tHr * 60, dNm: Math.sqrt(cpaDx*cpaDx + cpaDy*cpaDy) };
 }
 
 const MAP_STYLE = {
@@ -283,6 +502,42 @@ function _routeDistNm(waypoints) {
   for (let i = 0; i < waypoints.length - 1; i++)
     total += _haversineNm(waypoints[i][0], waypoints[i][1], waypoints[i+1][0], waypoints[i+1][1]);
   return total;
+}
+
+// Bearing from point A to point B in degrees (0–360)
+function _bearing(lat1, lon1, lat2, lon2) {
+  const toRad = d => d * Math.PI / 180;
+  const dLon  = toRad(lon2 - lon1);
+  const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+// Minimum distance (nm) from a point to a route
+function _distToRoute(lat, lon, waypoints) {
+  if (!waypoints || waypoints.length < 2) return Infinity;
+  let minD = Infinity;
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const [la, lo] = waypoints[i], [lb, lb2] = waypoints[i + 1];
+    // Project onto segment, clamp to [0,1]
+    const dx = lb - la, dy = lb2 - lo;
+    const t  = dx*dx + dy*dy < 1e-12 ? 0
+      : Math.max(0, Math.min(1, ((lat-la)*dx + (lon-lo)*dy) / (dx*dx + dy*dy)));
+    const d = _haversineNm(lat, lon, la + t*dx, lo + t*dy);
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
+// Next waypoint index ahead of the user
+function _nextWaypointIdx(lat, lon, waypoints) {
+  if (!waypoints || waypoints.length < 2) return -1;
+  let minD = Infinity, mi = 0;
+  waypoints.forEach(([wLat, wLon], i) => {
+    const d = _haversineNm(lat, lon, wLat, wLon);
+    if (d < minD) { minD = d; mi = i; }
+  });
+  return Math.min(mi + 1, waypoints.length - 1);
 }
 
 function _circleGeoJSON(lat, lon, radiusNm, steps = 72) {
@@ -386,7 +641,7 @@ async function _fetchSeamarks(minLat, minLon, maxLat, maxLon, signal) {
     5,
   );
 
-  const [osmRes, bridgeRes] = await Promise.allSettled([
+  const [osmRes, bridgeRes, reportedRes] = await Promise.allSettled([
     fetch('https://overpass-api.de/api/interpreter', {
       method: 'POST',
       body: `data=${encodeURIComponent(query)}`,
@@ -394,9 +649,10 @@ async function _fetchSeamarks(minLat, minLon, maxLat, maxLon, signal) {
       signal,
     }),
     fetch(`http://localhost:4000/api/noaa/bridges?lat=${midLat}&lon=${midLon}&radius=${Math.ceil(radiusKm)}`, { signal }),
+    fetch(`http://localhost:4000/api/hazards?lat=${midLat}&lon=${midLon}&radius=${Math.ceil(radiusKm)}`, { signal }),
   ]);
 
-  const buoys = [], hazards = [], bridges = [];
+  const buoys = [], hazards = [], bridges = [], reported = [];
 
   // OSM seamarks (buoys + hazards)
   if (osmRes.status === 'fulfilled' && osmRes.value.ok) {
@@ -427,18 +683,25 @@ async function _fetchSeamarks(minLat, minLon, maxLat, maxLon, signal) {
     }
   }
 
-  return { buoys, hazards, bridges };
+  // Community-reported hazards
+  if (reportedRes.status === 'fulfilled' && reportedRes.value.ok) {
+    const data = await reportedRes.value.json();
+    for (const h of data) reported.push(h);
+  }
+
+  return { buoys, hazards, bridges, reported };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat, fuelLevel, onReportHazard }) {
+function LiveMap({ route, accent, routingActive, routeError, onPinSet, bottomInset = 0, boat, fuelLevel, onReportHazard, onSeamarks, onVessels, isNavView, isLogging, logElapsed, logDistNm, onStartLog, onStopLog }) {
   const mapRef = useRef(null);
   const [userPos, setUserPos] = useState(null); // { lat, lng, acc, heading, speedKts }
   const [tracking, setTracking] = useState(false);
   const [follow, setFollow] = useState(false);
   const [navMode, setNavMode] = useState(false);
   const [arrived, setArrived] = useState(false);
+  const [offRoute, setOffRoute] = useState(false);
   const [vessels, setVessels] = useState({});
   const [gpsError, setGpsError] = useState(null);
   const [aisConnected, setAisConnected] = useState(false);
@@ -447,6 +710,14 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
   const [pinBusy, setPinBusy] = useState(false);
   const [seamarks, setSeamarks] = useState({ buoys: [], hazards: [], bridges: [] });
   const [showSeamarks, setShowSeamarks] = useState(true);
+  const [showCurrents, setShowCurrents] = useState(false);
+  const [currents, setCurrents] = useState([]);
+  const [selectedCurrent, setSelectedCurrent] = useState(null);
+  const [showWind, setShowWind] = useState(false);
+  const [windGrid, setWindGrid] = useState([]);
+  const [selectedWind, setSelectedWind] = useState(null);
+  const [mapCenter, setMapCenter] = useState(null);
+  const [mapZoom, setMapZoom] = useState(10);
   const [buoyObs, setBuoyObs] = useState(null); // nearest NDBC buoy live obs
   const watchRef = useRef(null);
   const wsRef = useRef(null);
@@ -507,7 +778,25 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
   ]);
 
   // Reset nav state when route changes
-  useEffect(() => { setNavMode(false); setArrived(false); }, [route?.to]);
+  useEffect(() => { setNavMode(false); setArrived(false); setOffRoute(false); }, [route?.to]);
+
+  // Auto-activate navMode when isNavView is set and a route + GPS are available
+  useEffect(() => {
+    if (isNavView && route?.waypoints?.length >= 2 && tracking && userPos) {
+      setNavMode(true);
+      setFollow(true);
+    }
+    if (!isNavView && navMode) {
+      setNavMode(false);
+    }
+  }, [isNavView, !!route?.waypoints, tracking, !!userPos]);
+
+  // Off-route detection — alert when > 0.3 nm from route while navigating
+  useEffect(() => {
+    if (!navMode || !userPos || !route?.waypoints?.length) { setOffRoute(false); return; }
+    const dist = _distToRoute(userPos.lat, userPos.lng, route.waypoints);
+    setOffRoute(dist > 0.3);
+  }, [navMode, Math.round((userPos?.lat??0)*1000), Math.round((userPos?.lng??0)*1000)]);
 
   // Fetch seamarks + NDBC buoy obs along the route
   useEffect(() => {
@@ -523,7 +812,7 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
       Math.min(...lats) - margin, Math.min(...lons) - margin,
       Math.max(...lats) + margin, Math.max(...lons) + margin,
       ctrl.signal,
-    ).then(setSeamarks).catch(() => {});
+    ).then(sm => { setSeamarks(sm); onSeamarks?.(sm); }).catch(() => {});
 
     // Nearest NDBC buoy observations
     fetch(`http://localhost:4000/api/noaa/buoys?lat=${midLat}&lon=${midLon}&n=1`, { signal: ctrl.signal })
@@ -537,6 +826,35 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
 
     return () => ctrl.abort();
   }, [JSON.stringify(route?.waypoints)]);
+
+  // Tidal current overlay fetch
+  useEffect(() => {
+    if (!showCurrents) { setCurrents([]); return; }
+    const center = mapRef.current?.getCenter();
+    const lat = center?.lat ?? initLat;
+    const lon = center?.lng ?? initLng;
+    let cancelled = false;
+    fetch(`${API}/api/noaa/currents?lat=${lat}&lon=${lon}&n=8`)
+      .then(r => r.ok ? r.json() : [])
+      .then(d => { if (!cancelled) setCurrents(d); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [showCurrents, mapCenter]);
+
+  // Wind overlay fetch
+  useEffect(() => {
+    if (!showWind) { setWindGrid([]); return; }
+    const center = mapRef.current?.getCenter();
+    const lat = center?.lat ?? initLat;
+    const lon = center?.lng ?? initLng;
+    const zoom = mapRef.current?.getZoom() ?? mapZoom;
+    let cancelled = false;
+    fetch(`${API}/api/weather/wind?lat=${lat}&lon=${lon}&zoom=${zoom.toFixed(1)}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(d => { if (!cancelled) setWindGrid(Array.isArray(d) ? d : []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [showWind, mapCenter, mapZoom]);
 
   // Arrival detection
   useEffect(() => {
@@ -595,28 +913,57 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
       ws.send(JSON.stringify({
         APIKey: AISSTREAM_KEY,
         BoundingBoxes: [[[lat - 0.25, lng - 0.25], [lat + 0.25, lng + 0.25]]],
-        FilterMessageTypes: ['PositionReport'],
+        FilterMessageTypes: ['PositionReport', 'ShipStaticData'],
       }));
     };
     ws.onmessage = e => {
       try {
         const msg = JSON.parse(e.data);
-        if (msg.MessageType !== 'PositionReport') return;
-        const p    = msg.Message?.PositionReport;
         const meta = msg.MetaData;
-        if (!p || Math.abs(p.Latitude) < 0.001 || Math.abs(p.Longitude) < 0.001) return;
-        setVessels(prev => ({
-          ...prev,
-          [p.UserID]: {
-            mmsi:     p.UserID,
-            name:     (meta?.ShipName || `Vessel ${p.UserID}`).trim(),
-            lat:      p.Latitude,
-            lng:      p.Longitude,
-            cog:      p.CourseOverGround,
-            sog:      p.SpeedOverGround,
-            shipType: meta?.ShipType || 0,
-          },
-        }));
+        if (msg.MessageType === 'PositionReport') {
+          const p = msg.Message?.PositionReport;
+          if (!p || Math.abs(p.Latitude) < 0.001 || Math.abs(p.Longitude) < 0.001) return;
+          setVessels(prev => {
+            const prevData   = prev[p.UserID] || {};
+            const prevHist   = prevData.speedHistory || [];
+            const lastEntry  = prevHist[prevHist.length - 1];
+            const shouldSample = !lastEntry || (Date.now() - lastEntry.t) > 30000;
+            const speedHistory = shouldSample
+              ? [...prevHist, { t: Date.now(), sog: p.SpeedOverGround ?? 0 }].slice(-20)
+              : prevHist;
+            return {
+              ...prev,
+              [p.UserID]: {
+                ...prevData,
+                mmsi:     p.UserID,
+                name:     (prevData.name || meta?.ShipName || `Vessel ${p.UserID}`).trim(),
+                lat:      p.Latitude,
+                lng:      p.Longitude,
+                cog:      p.CourseOverGround,
+                sog:      p.SpeedOverGround,
+                shipType: prevData.shipType || meta?.ShipType || 0,
+                updatedAt: Date.now(),
+                speedHistory,
+              },
+            };
+          });
+        } else if (msg.MessageType === 'ShipStaticData') {
+          const s = msg.Message?.ShipStaticData;
+          if (!s) return;
+          setVessels(prev => ({
+            ...prev,
+            [s.UserID]: {
+              ...(prev[s.UserID] || {}),
+              mmsi:        s.UserID,
+              name:        (s.Name || meta?.ShipName || `Vessel ${s.UserID}`).trim(),
+              callsign:    s.CallSign?.trim() || null,
+              destination: s.Destination?.trim() || null,
+              shipType:    s.Type || meta?.ShipType || 0,
+              dimLength:   (s.Dimension?.A || 0) + (s.Dimension?.B || 0) || null,
+              imo:         s.ImoNumber || null,
+            },
+          }));
+        }
       } catch {}
     };
     ws.onclose = () => setAisConnected(false);
@@ -631,12 +978,35 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
     wsRef.current?.close();
   }, []);
 
-  const vesselList = Object.values(vessels);
+  const vesselList = Object.values(vessels).filter(v => v.lat && v.lng);
 
-  // GeoJSON route line (MapLibre uses [lon, lat])
+  useEffect(() => { onVessels?.(vesselList); }, [JSON.stringify(vesselList.map(v=>v.mmsi+v.lat+v.lng))]);
+
+  // 10-minute projected heading lines for moving vessels
+  const vesselTracksGeoJSON = React.useMemo(() => {
+    const toRad = d => d * Math.PI / 180;
+    return {
+      type: 'FeatureCollection',
+      features: vesselList.filter(v => v.sog > 0.5 && v.cog != null).map(v => {
+        const cosLat = Math.cos(toRad(v.lat));
+        const dHr = 10 / 60;
+        const dLat = v.sog * dHr * Math.cos(toRad(v.cog)) / 60;
+        const dLon = v.sog * dHr * Math.sin(toRad(v.cog)) / (60 * cosLat);
+        return {
+          type: 'Feature',
+          properties: { color: _vesselColor(v.shipType) },
+          geometry: { type: 'LineString', coordinates: [[v.lng, v.lat], [v.lng + dLon, v.lat + dLat]] },
+        };
+      }),
+    };
+  }, [JSON.stringify(vesselList.map(v=>v.mmsi+v.sog+v.cog))]);
+
+  // GeoJSON route line (MapLibre uses [lon, lat]). Only ever drawn from real,
+  // water-verified backend waypoints — never a naive straight line, which by
+  // construction can cross land.
   const routeCoords = route?.waypoints?.length >= 2
     ? route.waypoints.map(([lat, lon]) => [lon, lat])
-    : (depCoords && arrCoords ? [[depCoords[1], depCoords[0]], [arrCoords[1], arrCoords[0]]] : null);
+    : null;
 
   // Fuel range circle
   const fuelRangeNm = (boat?.fuelBurn > 0 && boat?.cruiseSpeed > 0 && fuelLevel > 0)
@@ -654,6 +1024,12 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
         initialViewState={{ longitude: initLng, latitude: initLat, zoom: 12, pitch: 60, bearing: 0 }}
         style={{ width: '100%', height: '100%' }}
         attributionControl={false}
+        onMoveEnd={e => {
+          const c = e.target?.getCenter();
+          const z = e.target?.getZoom();
+          if (c) setMapCenter({ lat: Math.round(c.lat * 100) / 100, lng: Math.round(c.lng * 100) / 100 });
+          if (z != null) setMapZoom(Math.round(z));
+        }}
         onClick={onPinSet ? (e) => {
           setSelectedVessel(null);
           setMapClick({ lat: e.lngLat.lat, lon: e.lngLat.lng, x: e.point.x, y: e.point.y });
@@ -739,6 +1115,32 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
           </Marker>
         ))}
 
+        {/* Next waypoint highlight in navMode */}
+        {navMode && userPos && route?.waypoints?.length >= 2 && (() => {
+          const idx = _nextWaypointIdx(userPos.lat, userPos.lng, route.waypoints);
+          const wpt = route.waypoints[idx];
+          if (!wpt) return null;
+          return (
+            <Marker longitude={wpt[1]} latitude={wpt[0]} anchor="center">
+              <div style={{ width:20, height:20, borderRadius:'50%', background:accent, border:'3px solid white', boxShadow:`0 0 0 4px ${accent}55, 0 2px 8px rgba(0,0,0,0.7)`, animation:'pulse 1.5s infinite' }}/>
+            </Marker>
+          );
+        })()}
+
+        {/* Community-reported hazard markers */}
+        {seamarks.reported?.map((h, i) => {
+          const emoji = h.type?.includes('rock')||h.type?.includes('reef') ? '🪨'
+            : h.type?.includes('wreck') ? '🚢' : h.type?.includes('shoal') ? '🏖️'
+            : h.type?.includes('debris') ? '📦' : '⚠️';
+          return (
+            <Marker key={`rep-${h.id||i}`} longitude={h.lon} latitude={h.lat} anchor="center">
+              <div title={h.description || h.type} style={{ width:24, height:24, borderRadius:6, background:'#FFFBEB', border:'2px solid #D97706', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, boxShadow:'0 0 0 3px rgba(217,119,6,0.25), 0 2px 6px rgba(0,0,0,0.5)', cursor:'default' }}>
+                {emoji}
+              </div>
+            </Marker>
+          );
+        })}
+
         {/* Departure dot */}
         {depCoords && (
           <Marker longitude={depCoords[1]} latitude={depCoords[0]} anchor="center">
@@ -756,32 +1158,35 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
           </Marker>
         )}
 
-        {/* AIS vessel markers */}
-        {vesselList.map(v => (
-          <Marker key={v.mmsi} longitude={v.lng} latitude={v.lat} anchor="center"
-            onClick={e => { e.originalEvent.stopPropagation(); setSelectedVessel(sel => sel?.mmsi === v.mmsi ? null : v); }}
-          >
-            <svg width="14" height="18" viewBox="0 0 14 18"
-              style={{ transform: `rotate(${v.cog || 0}deg)`, display: 'block', filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.6))', cursor: 'pointer' }}
-            >
-              <polygon points="7,0 14,18 7,13 0,18" fill={_vesselColor(v.shipType)}/>
-            </svg>
-          </Marker>
-        ))}
-
-        {/* Vessel popup on click */}
-        {selectedVessel && (
-          <Popup longitude={selectedVessel.lng} latitude={selectedVessel.lat} anchor="top"
-            closeButton={true} onClose={() => setSelectedVessel(null)}
-          >
-            <div style={{ minWidth: 140, fontFamily: 'ui-sans-serif,system-ui,sans-serif', fontSize: 13 }}>
-              <div style={{ fontWeight: 700, marginBottom: 4 }}>{selectedVessel.name}</div>
-              <div>Speed: {selectedVessel.sog?.toFixed(1) ?? '—'} kt</div>
-              <div>Course: {selectedVessel.cog != null ? Math.round(selectedVessel.cog) : '—'}°</div>
-              <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>MMSI {selectedVessel.mmsi}</div>
-            </div>
-          </Popup>
+        {/* AIS vessel heading projections (10-min track lines) */}
+        {vesselTracksGeoJSON.features.length > 0 && (
+          <Source id="vessel-tracks" type="geojson" data={vesselTracksGeoJSON}>
+            <Layer id="vessel-tracks-line" type="line" paint={{ 'line-color': ['get','color'], 'line-width': 1.5, 'line-opacity': 0.55, 'line-dasharray': [4, 3] }}/>
+          </Source>
         )}
+
+        {/* AIS vessel markers */}
+        {vesselList.map(v => {
+          const isSel = selectedVessel?.mmsi === v.mmsi;
+          const cpaData = userPos ? _computeCPA(userPos.lat, userPos.lng, 0, 0, v.lat, v.lng, v.sog||0, v.cog||0) : null;
+          const cpaWarn = cpaData && cpaData.dNm < 0.5 && cpaData.tMin < 20 && cpaData.tMin > 0;
+          return (
+            <Marker key={v.mmsi} longitude={v.lng} latitude={v.lat} anchor="center"
+              onClick={e => { e.originalEvent.stopPropagation(); setSelectedVessel(sel => sel?.mmsi === v.mmsi ? null : v); }}
+            >
+              <div style={{ position:'relative', cursor:'pointer' }}>
+                {cpaWarn && <div style={{ position:'absolute', inset:-4, borderRadius:'50%', border:'2px solid #EF4444', animation:'pulse 1s infinite', pointerEvents:'none' }}/>}
+                <svg width="14" height="18" viewBox="0 0 14 18"
+                  style={{ transform:`rotate(${v.cog||0}deg)`, display:'block', filter:`drop-shadow(0 1px 3px rgba(0,0,0,0.7))` }}
+                >
+                  <polygon points="7,0 14,18 7,13 0,18" fill={cpaWarn ? '#EF4444' : _vesselColor(v.shipType)} stroke="rgba(0,0,0,0.4)" strokeWidth="0.5"/>
+                </svg>
+              </div>
+            </Marker>
+          );
+        })}
+
+        {/* Vessel popup — handled by VesselDetailPanel outside <Map> */}
 
         {/* GPS position */}
         {userPos && (
@@ -808,6 +1213,130 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
               <line x1="1" y1="14" x2="8" y2="14" stroke={accent} strokeWidth="2" strokeLinecap="round"/>
               <line x1="20" y1="14" x2="27" y2="14" stroke={accent} strokeWidth="2" strokeLinecap="round"/>
             </svg>
+          </Marker>
+        )}
+
+        {/* Tidal current arrows */}
+        {showCurrents && currents.map((c, i) => {
+          const col = c.type === 'flood' ? '#60A5FA' : c.type === 'ebb' ? '#FBBF24' : '#94A3B8';
+          const sz = c.speed < 0.3 ? 18 : c.speed < 0.8 ? 22 : c.speed < 1.5 ? 28 : 36;
+          const isSelected = selectedCurrent?.id === c.id;
+          return (
+            <Marker key={`cur-${c.id}-${i}`} longitude={c.lon} latitude={c.lat} anchor="center">
+              <div
+                title={`${c.name}: ${c.speed.toFixed(1)} kt ${c.type}`}
+                onClick={e => { e.stopPropagation(); setSelectedCurrent(isSelected ? null : c); }}
+                style={{ cursor: 'pointer', transform: isSelected ? 'scale(1.2)' : undefined, transition: 'transform 0.12s' }}
+              >
+                <svg
+                  width={sz} height={sz * 1.3}
+                  viewBox="0 0 24 32"
+                  style={{ display: 'block', transform: `rotate(${c.dir}deg)`, filter: `drop-shadow(0 1px 3px rgba(0,0,0,0.65))` }}
+                >
+                  <polygon points="12,2 20,24 12,19 4,24" fill={col} fillOpacity={Math.min(0.95, 0.45 + c.speed * 0.28)}/>
+                  <line x1="12" y1="24" x2="12" y2="31" stroke={col} strokeWidth="2.5" strokeLinecap="round" strokeOpacity="0.85"/>
+                </svg>
+              </div>
+            </Marker>
+          );
+        })}
+
+        {/* Current station popup */}
+        {selectedCurrent && (
+          <Marker longitude={selectedCurrent.lon} latitude={selectedCurrent.lat} anchor="bottom" offset={[0, -20]}>
+            <div style={{
+              background: 'rgba(8,17,28,0.96)', border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: 12, padding: '10px 14px', backdropFilter: 'blur(14px)',
+              boxShadow: '0 4px 18px rgba(0,0,0,0.7)', minWidth: 160, pointerEvents: 'auto',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'white', letterSpacing: '0.02em' }}>
+                  {selectedCurrent.name}
+                </span>
+                <button onClick={() => setSelectedCurrent(null)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}>✕</button>
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: selectedCurrent.type === 'flood' ? '#60A5FA' : selectedCurrent.type === 'ebb' ? '#FBBF24' : '#94A3B8', marginBottom: 2 }}>
+                {selectedCurrent.speed.toFixed(1)} kt
+              </div>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ textTransform: 'capitalize', fontWeight: 600,
+                  color: selectedCurrent.type === 'flood' ? '#93C5FD' : selectedCurrent.type === 'ebb' ? '#FCD34D' : '#CBD5E1' }}>
+                  {selectedCurrent.type}
+                </span>
+                <span>·</span>
+                <span>{selectedCurrent.dir.toFixed(0)}° {(() => {
+                  const d = ((selectedCurrent.dir % 360) + 360) % 360;
+                  const dirs = ['N','NE','E','SE','S','SW','W','NW'];
+                  return dirs[Math.round(d / 45) % 8];
+                })()}</span>
+                {selectedCurrent.dist_km != null && (<><span>·</span><span>{(selectedCurrent.dist_km * 0.621).toFixed(0)} mi</span></>)}
+              </div>
+              {selectedCurrent.time && (
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', marginTop: 5 }}>
+                  as of {selectedCurrent.time}
+                </div>
+              )}
+            </div>
+          </Marker>
+        )}
+
+        {/* Wind arrows */}
+        {showWind && windGrid.map((w, i) => {
+          const col = w.speedKt < 5 ? '#94A3B8' : w.speedKt < 12 ? '#4ADE80' : w.speedKt < 20 ? '#FB923C' : w.speedKt < 30 ? '#EF4444' : '#A855F7';
+          const sz  = w.speedKt < 5 ? 20 : w.speedKt < 12 ? 24 : w.speedKt < 20 ? 30 : w.speedKt < 30 ? 36 : 42;
+          const rotDeg = (w.dirDeg + 180) % 360;
+          const isSel  = selectedWind && selectedWind.lat === w.lat && selectedWind.lon === w.lon;
+          return (
+            <Marker key={`wind-${i}`} longitude={w.lon} latitude={w.lat} anchor="center">
+              <div
+                title={`Wind: ${w.speedKt} kt from ${w.dirDeg}°`}
+                onClick={e => { e.stopPropagation(); setSelectedWind(isSel ? null : w); setSelectedCurrent(null); }}
+                style={{ cursor: 'pointer', transform: isSel ? 'scale(1.25)' : undefined, transition: 'transform 0.12s' }}
+              >
+                <svg width={sz} height={sz * 1.3} viewBox="0 0 24 32"
+                  style={{ display: 'block', transform: `rotate(${rotDeg}deg)`, filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.6))' }}
+                >
+                  <polygon points="12,2 20,22 12,17 4,22" fill={col} fillOpacity={0.9}/>
+                  <line x1="12" y1="22" x2="12" y2="30" stroke={col} strokeWidth="2.5" strokeLinecap="round" strokeOpacity="0.85"/>
+                  <line x1="8" y1="26" x2="16" y2="26" stroke={col} strokeWidth="1.5" strokeLinecap="round" strokeOpacity="0.6"/>
+                </svg>
+              </div>
+            </Marker>
+          );
+        })}
+
+        {/* Wind popup */}
+        {selectedWind && (
+          <Marker longitude={selectedWind.lon} latitude={selectedWind.lat} anchor="bottom" offset={[0, -22]}>
+            <div style={{
+              background: 'rgba(8,17,28,0.96)', border: '1px solid rgba(255,255,255,0.12)',
+              borderRadius: 12, padding: '10px 14px', backdropFilter: 'blur(14px)',
+              boxShadow: '0 4px 18px rgba(0,0,0,0.7)', minWidth: 148, pointerEvents: 'auto',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.55)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Wind</span>
+                <button onClick={() => setSelectedWind(null)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)', cursor: 'pointer', fontSize: 14, padding: 0, lineHeight: 1 }}>✕</button>
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color:
+                selectedWind.speedKt < 5 ? '#94A3B8' : selectedWind.speedKt < 12 ? '#4ADE80' :
+                selectedWind.speedKt < 20 ? '#FB923C' : selectedWind.speedKt < 30 ? '#EF4444' : '#A855F7',
+                marginBottom: 2 }}>
+                {selectedWind.speedKt.toFixed(1)} kt
+              </div>
+              {selectedWind.gustKt != null && selectedWind.gustKt > selectedWind.speedKt && (
+                <div style={{ fontSize: 11, color: '#FB923C', marginBottom: 4 }}>
+                  Gusts to {selectedWind.gustKt.toFixed(1)} kt
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+                {(() => {
+                  const d = ((selectedWind.dirDeg % 360) + 360) % 360;
+                  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+                  const label = dirs[Math.round(d / 22.5) % 16];
+                  return `From ${label} · ${d}°`;
+                })()}
+              </div>
+            </div>
           </Marker>
         )}
       </Map>
@@ -884,27 +1413,56 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
         </div>
       )}
 
-      {/* OpenSeaMap toggle button */}
-      <button
-        onClick={() => setShowSeamarks(v => !v)}
-        title={showSeamarks ? 'Hide nautical chart overlay' : 'Show nautical chart overlay'}
-        style={{
-          position: 'absolute', top: 14, right: 14, zIndex: 1000,
-          width: 36, height: 36, borderRadius: 10, border: 'none', cursor: 'pointer',
-          background: showSeamarks ? 'rgba(34,227,208,0.18)' : 'rgba(10,20,32,0.82)',
-          backdropFilter: 'blur(10px)',
-          boxShadow: showSeamarks
-            ? '0 0 0 1.5px rgba(34,227,208,0.6), 0 2px 8px rgba(0,0,0,0.5)'
-            : '0 0 0 1px rgba(255,255,255,0.12), 0 2px 8px rgba(0,0,0,0.5)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 17, transition: 'background 0.15s, box-shadow 0.15s',
-        }}
-      >⚓</button>
+      {/* Map overlay toggle buttons */}
+      <div style={{ position: 'absolute', top: 14, right: 14, zIndex: 1000, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <button
+          onClick={() => setShowSeamarks(v => !v)}
+          title={showSeamarks ? 'Hide nautical chart overlay' : 'Show nautical chart overlay'}
+          style={{
+            width: 36, height: 36, borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: showSeamarks ? 'rgba(34,227,208,0.18)' : 'rgba(10,20,32,0.82)',
+            backdropFilter: 'blur(10px)',
+            boxShadow: showSeamarks
+              ? '0 0 0 1.5px rgba(34,227,208,0.6), 0 2px 8px rgba(0,0,0,0.5)'
+              : '0 0 0 1px rgba(255,255,255,0.12), 0 2px 8px rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 17, transition: 'background 0.15s, box-shadow 0.15s',
+          }}
+        >⚓</button>
+        <button
+          onClick={() => { setShowCurrents(v => !v); setSelectedCurrent(null); }}
+          title={showCurrents ? 'Hide tidal currents' : 'Show tidal current overlay'}
+          style={{
+            width: 36, height: 36, borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: showCurrents ? 'rgba(96,165,250,0.22)' : 'rgba(10,20,32,0.82)',
+            backdropFilter: 'blur(10px)',
+            boxShadow: showCurrents
+              ? '0 0 0 1.5px rgba(96,165,250,0.7), 0 2px 8px rgba(0,0,0,0.5)'
+              : '0 0 0 1px rgba(255,255,255,0.12), 0 2px 8px rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 17, transition: 'background 0.15s, box-shadow 0.15s',
+          }}
+        >🌊</button>
+        <button
+          onClick={() => { setShowWind(v => !v); setSelectedWind(null); }}
+          title={showWind ? 'Hide wind overlay' : 'Show wind overlay'}
+          style={{
+            width: 36, height: 36, borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: showWind ? 'rgba(74,222,128,0.22)' : 'rgba(10,20,32,0.82)',
+            backdropFilter: 'blur(10px)',
+            boxShadow: showWind
+              ? '0 0 0 1.5px rgba(74,222,128,0.7), 0 2px 8px rgba(0,0,0,0.5)'
+              : '0 0 0 1px rgba(255,255,255,0.12), 0 2px 8px rgba(0,0,0,0.5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 17, transition: 'background 0.15s, box-shadow 0.15s',
+          }}
+        >💨</button>
+      </div>
 
       {/* NDBC buoy conditions chip */}
       {buoyObs && (buoyObs.waveHeight_ft != null || buoyObs.windSpeed_kt != null) && (
         <div style={{
-          position: 'absolute', top: 58, right: 14, zIndex: 1000,
+          position: 'absolute', top: 146, right: 14, zIndex: 1000,
           background: 'rgba(8,17,28,0.92)', border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 10, padding: '6px 10px', backdropFilter: 'blur(12px)',
           boxShadow: '0 2px 10px rgba(0,0,0,0.5)',
@@ -947,48 +1505,90 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
 
       {/* Navigation HUD */}
       {navMode && (() => {
-        const distNm = userPos && arrCoords
-          ? (route?.waypoints?.length >= 2
-              ? _routeRemainingNm(route.waypoints, userPos.lat, userPos.lng)
+        const wpts    = route?.waypoints;
+        const distNm  = userPos && arrCoords
+          ? (wpts?.length >= 2
+              ? _routeRemainingNm(wpts, userPos.lat, userPos.lng)
               : _haversineNm(userPos.lat, userPos.lng, arrCoords[0], arrCoords[1]))
           : null;
-        const etaVal = distNm != null ? _etaStr(distNm, userPos?.speedKts) : null;
+        const totalNm   = wpts ? _routeDistNm(wpts) : 0;
+        const progPct   = (totalNm > 0 && distNm != null) ? Math.max(0, Math.min(100, ((totalNm - distNm) / totalNm) * 100)) : 0;
+        const etaVal    = distNm != null ? _etaStr(distNm, userPos?.speedKts) : null;
+        const nextIdx   = userPos && wpts ? _nextWaypointIdx(userPos.lat, userPos.lng, wpts) : -1;
+        const nextWpt   = nextIdx >= 0 ? wpts[nextIdx] : null;
+        const nextDistNm = nextWpt && userPos ? _haversineNm(userPos.lat, userPos.lng, nextWpt[0], nextWpt[1]) : null;
+        const nextBearDeg = nextWpt && userPos ? _bearing(userPos.lat, userPos.lng, nextWpt[0], nextWpt[1]) : null;
+        const nextBearStr = nextBearDeg != null ? _compassDir(nextBearDeg) : null;
+        const isLast    = nextIdx === (wpts?.length ?? 0) - 1;
 
         return (
           <div style={{
             position: 'absolute', bottom: bottomInset + 66, left: 12, right: 12, zIndex: 1000,
-            background: 'rgba(8,17,28,0.97)', border: '1px solid var(--c-border)',
+            background: 'rgba(8,17,28,0.97)', border: `1px solid ${offRoute ? '#EF4444' : 'rgba(255,255,255,0.1)'}`,
             borderRadius: 18, overflow: 'hidden',
-            boxShadow: '0 -4px 30px rgba(0,0,0,0.6)',
+            boxShadow: offRoute ? '0 0 0 3px rgba(239,68,68,0.3), 0 -4px 30px rgba(0,0,0,0.7)' : '0 -4px 30px rgba(0,0,0,0.6)',
             backdropFilter: 'blur(16px)',
           }}>
-            {/* Destination bar */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px 0' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Icon name="pin" size={13} color={accent} sw={2.2}/>
-                <span style={{ fontSize: 12.5, color: 'var(--c-text)', fontWeight: 700, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {route?.to || 'Destination'}
-                </span>
+            {/* Off-route warning */}
+            {offRoute && (
+              <div style={{ background:'#7F1D1D', padding:'6px 14px', display:'flex', alignItems:'center', gap:7, borderBottom:'1px solid #EF444444' }}>
+                <span style={{ fontSize:15 }}>⚠</span>
+                <span style={{ fontSize:12.5, fontWeight:700, color:'#FCA5A5' }}>Off Route — recalculate or return to course</span>
               </div>
-              <button onClick={() => setNavMode(false)} style={{
-                all: 'unset', cursor: 'pointer', fontSize: 11, fontWeight: 700,
-                color: 'var(--c-text-4)', background: 'var(--c-surface-alt)',
-                padding: '3px 10px', borderRadius: 6,
-              }}>End</button>
+            )}
+
+            {/* Destination bar + progress */}
+            <div style={{ padding: '10px 14px 0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Icon name="pin" size={13} color={accent} sw={2.2}/>
+                  <span style={{ fontSize: 12.5, color: 'var(--c-text)', fontWeight: 700, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {route?.to || 'Destination'}
+                  </span>
+                </div>
+                <button onClick={() => { setNavMode(false); setOffRoute(false); }} style={{
+                  all: 'unset', cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                  color: 'var(--c-text-4)', background: 'var(--c-surface-alt)',
+                  padding: '3px 10px', borderRadius: 6,
+                }}>End</button>
+              </div>
+              {/* Route progress bar */}
+              {totalNm > 0 && (
+                <div style={{ height: 4, borderRadius: 99, background: 'rgba(255,255,255,0.12)', overflow: 'hidden', marginBottom: 8 }}>
+                  <div style={{ height: '100%', width: `${progPct}%`, borderRadius: 99, background: accent, transition: 'width 1s linear' }}/>
+                </div>
+              )}
             </div>
 
+            {/* Next waypoint banner */}
+            {nextWpt && !isLast && nextDistNm != null && nextBearStr && (
+              <div style={{ margin: '0 10px 6px', padding: '5px 10px', borderRadius: 9, background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 26, height: 26, borderRadius: '50%', background: accent + '22', border: `1.5px solid ${accent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <svg width="12" height="12" viewBox="0 0 12 12" style={{ transform: `rotate(${nextBearDeg}deg)` }}>
+                    <polygon points="6,0 12,12 6,9 0,12" fill={accent}/>
+                  </svg>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontWeight: 600, letterSpacing: '0.06em' }}>NEXT WAYPOINT</div>
+                  <div style={{ fontSize: 12, color: 'var(--c-text)', fontWeight: 600 }}>{nextDistNm < 0.1 ? (nextDistNm*6076).toFixed(0)+'yd' : nextDistNm.toFixed(2)+' nm'} · {nextBearStr} ({Math.round(nextBearDeg)}°)</div>
+                </div>
+                {wpts && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>{nextIdx}/{wpts.length - 1}</div>}
+              </div>
+            )}
+
             {/* Metrics row */}
-            <div style={{ display: 'flex', padding: '8px 10px 12px', gap: 2 }}>
+            <div style={{ display: 'flex', padding: '4px 10px 12px', gap: 2 }}>
               {[
-                { label: 'Speed', val: userPos?.speedKts != null ? `${userPos.speedKts.toFixed(1)}` : '—', unit: 'kt' },
-                { label: 'Heading', val: userPos?.heading != null ? _compassDir(userPos.heading) : '—', unit: userPos?.heading != null ? `${Math.round(userPos.heading)}°` : '' },
-                { label: 'Distance', val: distNm != null ? distNm.toFixed(1) : '—', unit: 'nm' },
-                { label: 'ETA', val: etaVal || (userPos?.speedKts != null && userPos.speedKts < 0.5 ? 'Stopped' : '—'), unit: '' },
+                { label: 'Speed',    val: userPos?.speedKts != null ? userPos.speedKts.toFixed(1) : '—', unit: 'kt' },
+                { label: 'Heading',  val: userPos?.heading != null ? _compassDir(userPos.heading) : '—', unit: userPos?.heading != null ? `${Math.round(userPos.heading)}°` : '' },
+                { label: 'Dist',     val: distNm != null ? distNm.toFixed(1) : '—', unit: 'nm left' },
+                { label: 'ETA',      val: etaVal || (userPos?.speedKts != null && userPos.speedKts < 0.5 ? 'Stopped' : '—'), unit: '' },
+                { label: 'Progress', val: totalNm > 0 ? `${Math.round(progPct)}` : '—', unit: '%' },
               ].map(({ label, val, unit }) => (
-                <div key={label} style={{ flex: 1, textAlign: 'center', padding: '6px 4px', borderRadius: 10, background: 'rgba(255,255,255,0.04)' }}>
-                  <div style={{ fontSize: 10, color: 'var(--c-text-4)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 3 }}>{label}</div>
-                  <div style={{ fontSize: 17, color: 'var(--c-text)', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{val}</div>
-                  {unit && <div style={{ fontSize: 10, color: 'var(--c-text-3)', marginTop: 2 }}>{unit}</div>}
+                <div key={label} style={{ flex: 1, textAlign: 'center', padding: '6px 3px', borderRadius: 10, background: 'rgba(255,255,255,0.04)' }}>
+                  <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.4)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 3 }}>{label}</div>
+                  <div style={{ fontSize: 16, color: 'var(--c-text)', fontWeight: 700, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{val}</div>
+                  {unit && <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>{unit}</div>}
                 </div>
               ))}
             </div>
@@ -1061,10 +1661,25 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
         </div>
       )}
 
+      {/* Routing failure — shown instead of ever drawing an unverified line */}
+      {!routingActive && routeError && (
+        <div style={{
+          position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 1000,
+          maxWidth: 'calc(100% - 28px)',
+          padding: '7px 14px', borderRadius: 99,
+          background: 'rgba(63,20,24,0.95)', border: '1px solid #7A2530',
+          backdropFilter: 'blur(10px)',
+          display: 'flex', alignItems: 'center', gap: 7,
+        }}>
+          <span style={{ fontSize: 14, lineHeight: 1 }}>⚠️</span>
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: '#FF6B6B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{routeError}</span>
+        </div>
+      )}
+
       {/* AIS vessel count badge */}
       {aisConnected && vesselList.length > 0 && (
         <div style={{
-          position: 'absolute', top: 56, right: 14, zIndex: 1000,
+          position: 'absolute', top: 14, left: 14, zIndex: 1000,
           padding: '5px 10px', borderRadius: 99,
           background: 'rgba(10,20,32,0.9)', border: '1px solid var(--c-border)',
           backdropFilter: 'blur(10px)',
@@ -1073,6 +1688,37 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
           <div style={{ width: 6, height: 6, borderRadius: 99, background: '#4ADE80', boxShadow: '0 0 6px #4ADE80' }}/>
           <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--c-text)' }}>{vesselList.length} vessels nearby</span>
         </div>
+      )}
+
+      {/* Trip Logger REC button */}
+      {(onStartLog || onStopLog) && (
+        <button
+          onClick={isLogging ? onStopLog : onStartLog}
+          style={{
+            position: 'absolute', bottom: bottomInset + 16, left: 16, zIndex: 1000,
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '9px 14px', borderRadius: 22, border: 'none', cursor: 'pointer',
+            background: isLogging ? 'rgba(220,38,38,0.92)' : 'rgba(10,20,32,0.88)',
+            backdropFilter: 'blur(12px)',
+            boxShadow: isLogging ? '0 0 0 2px rgba(220,38,38,0.5), 0 2px 10px rgba(0,0,0,0.5)' : '0 2px 10px rgba(0,0,0,0.45)',
+            transition: 'all 0.2s',
+          }}
+        >
+          {isLogging ? (
+            <>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'white', animation: 'pulse 1s infinite', flexShrink: 0 }}/>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: 'white', letterSpacing: '0.04em' }}>
+                {logElapsed || '0:00'} · {logDistNm != null ? `${logDistNm.toFixed(2)} nm` : '0.00 nm'}
+              </span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.75)', letterSpacing: '0.06em' }}>STOP</span>
+            </>
+          ) : (
+            <>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: '#EF4444', flexShrink: 0 }}/>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: 'white', letterSpacing: '0.06em' }}>REC TRIP</span>
+            </>
+          )}
+        </button>
       )}
 
       {/* GPS error */}
@@ -1094,6 +1740,16 @@ function LiveMap({ route, accent, routingActive, onPinSet, bottomInset = 0, boat
       }}>
         © Esri · OpenSeaMap
       </div>
+
+      {/* Vessel detail panel */}
+      {selectedVessel && (
+        <VesselDetailPanel
+          vessel={vessels[selectedVessel.mmsi] ?? selectedVessel}
+          userPos={userPos}
+          accent={accent}
+          onClose={() => setSelectedVessel(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1431,8 +2087,8 @@ function LoginScreen({ onLogin, accent }) {
   if (mode === 'fp-done') {
     return (
       <div style={{ position: 'absolute', inset: 0, background: 'var(--c-bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '28px 24px' }}>
-        <div style={{ width: 64, height: 64, borderRadius: 20, background: '#0F3D2E', border: '1.5px solid #1F6B4D', display: 'grid', placeItems: 'center', marginBottom: 20 }}>
-          <Icon name="check" size={30} color="#34E0A0" sw={2.2}/>
+        <div style={{ width: 64, height: 64, borderRadius: 20, background: STATUS.go.bg, border: `1.5px solid ${STATUS.go.border}`, display: 'grid', placeItems: 'center', marginBottom: 20 }}>
+          <Icon name="check" size={30} color={STATUS.go.fg} sw={2.2}/>
         </div>
         <div style={{ fontSize: 22, color: 'var(--c-text)', fontWeight: 700, marginBottom: 8, textAlign: 'center' }}>Password updated!</div>
         <div style={{ fontSize: 13.5, color: 'var(--c-text-3)', lineHeight: 1.6, textAlign: 'center', marginBottom: 32 }}>
@@ -1529,16 +2185,16 @@ function DisclaimerScreen({ onAccept, accent }) {
       <div style={{ textAlign: 'center', marginBottom: 28 }}>
         <div style={{
           width: 56, height: 56, borderRadius: 18,
-          background: '#3F2E0A', border: '1.5px solid #7A5A18',
+          background: STATUS.wait.bg, border: `1.5px solid ${STATUS.wait.border}`,
           display: 'grid', placeItems: 'center', margin: '0 auto 14px',
         }}>
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#F5B547" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={STATUS.wait.fg} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
             <line x1="12" y1="9" x2="12" y2="13"/>
             <line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
         </div>
-        <div style={{ fontSize: 10.5, letterSpacing: '0.14em', color: '#F5B547', fontWeight: 700, textTransform: 'uppercase', marginBottom: 6 }}>
+        <div style={{ fontSize: 10.5, letterSpacing: '0.14em', color: STATUS.wait.fg, fontWeight: 700, textTransform: 'uppercase', marginBottom: 6 }}>
           Important Notice
         </div>
         <div style={{ fontSize: 22, color: 'var(--c-text)', fontWeight: 700, letterSpacing: '-0.02em' }}>
@@ -1771,10 +2427,10 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
                 style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--c-text)', fontSize: 17, fontWeight: 500, letterSpacing: '-0.01em', fontFamily: 'inherit' }} />
             </div>
             {showFromSuggestions && fromSuggestions && fromSuggestions.length > 0 && (
-              <div style={{ position: 'absolute', left: 0, right: 0, top: 68, background: '#0B1620', border: '1px solid var(--c-border)', borderRadius: 10, zIndex: 40, padding: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.6)' }}>
+              <div style={{ position: 'absolute', left: 0, right: 0, top: 68, background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 10, zIndex: 40, padding: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)' }}>
                 {fromSuggestions.map((s, i) => (
                   <div key={i} onMouseDown={() => selectFromSuggestion(i)} onMouseEnter={() => setFromActiveIndex(i)}
-                    style={{ padding: '8px 10px', cursor: 'pointer', color: fromActiveIndex === i ? '#06151E' : 'var(--c-text-2)', background: fromActiveIndex === i ? 'var(--c-text-2)' : 'transparent', fontSize: 13 }}>{s.display_name}</div>
+                    style={{ padding: '8px 10px', borderRadius: 7, cursor: 'pointer', color: 'var(--c-text)', background: fromActiveIndex === i ? 'var(--c-surface-alt)' : 'transparent', fontSize: 13 }}>{s.display_name}</div>
                 ))}
               </div>
             )}
@@ -1797,10 +2453,10 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
                 style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--c-text)', fontSize: 17, fontWeight: 500, letterSpacing: '-0.01em', fontFamily: 'inherit' }} />
             </div>
             {showToSuggestions && toSuggestions && toSuggestions.length > 0 && (
-              <div style={{ position: 'absolute', left: 0, right: 0, top: 68, background: '#0B1620', border: '1px solid var(--c-border)', borderRadius: 10, zIndex: 40, padding: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.6)' }}>
+              <div style={{ position: 'absolute', left: 0, right: 0, top: 68, background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 10, zIndex: 40, padding: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)' }}>
                 {toSuggestions.map((s, i) => (
                   <div key={i} onMouseDown={() => selectToSuggestion(i)} onMouseEnter={() => setToActiveIndex(i)}
-                    style={{ padding: '8px 10px', cursor: 'pointer', color: toActiveIndex === i ? '#06151E' : 'var(--c-text-2)', background: toActiveIndex === i ? 'var(--c-text-2)' : 'transparent', fontSize: 13 }}>{s.display_name}</div>
+                    style={{ padding: '8px 10px', borderRadius: 7, cursor: 'pointer', color: 'var(--c-text)', background: toActiveIndex === i ? 'var(--c-surface-alt)' : 'transparent', fontSize: 13 }}>{s.display_name}</div>
                 ))}
               </div>
             )}
@@ -1957,7 +2613,7 @@ function HomeScreen({ accent, boat, boats = [], onPlan, onTrip, onSelectBoat, cu
                   transition:'opacity 0.12s' }}
                 onMouseEnter={e => { if (onRouteTo && r.lat != null) e.currentTarget.style.opacity='0.8'; }}
                 onMouseLeave={e => { e.currentTarget.style.opacity='1'; }}>
-                <div style={{ width:32, height:32, borderRadius:99, background:'#0E2238', display:'grid', placeItems:'center', flexShrink:0, fontSize:15 }}>{r.isRamp?'🚤':'⚓'}</div>
+                <div style={{ width:32, height:32, borderRadius:99, background:'var(--c-surface-alt)', border:'1px solid var(--c-border)', display:'grid', placeItems:'center', flexShrink:0, fontSize:15 }}>{r.isRamp?'🚤':'⚓'}</div>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:13, color:'var(--c-text)', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{r.name}</div>
                   <div style={{ fontSize:11, color: onRouteTo && r.lat != null ? accent : 'var(--c-text-4)', marginTop:1, fontWeight: onRouteTo && r.lat != null ? 600 : 400 }}>
@@ -2074,247 +2730,220 @@ function FuelCard({ boat, fuelLevel, fuelRangeNm, routeDistNm, fuelOk, accent })
 // ─────────────────────────────────────────────────────────────
 // TRIP DETAIL SCREEN
 // ─────────────────────────────────────────────────────────────
-function TripScreen({ accent, boat, verdict, pulse, onSave, onPlan, route, currentTrip, routeSafety, routingActive, onPinSet }) {
-  const [sheetExpanded, setSheetExpanded] = useState(false);
-  const [routeProgress, setRouteProgress] = useState(0);
+function TripScreen({ accent, boat, verdict, onSave, onPlan, route, routeSafety }) {
   const [saved, setSaved] = useState(false);
-  const [fromValue, setFromValue] = useState(route?.from || 'Anna Maria Island');
-  const [toValue, setToValue] = useState(route?.to || 'Egmont Key');
+  const [fromValue, setFromValue] = useState(route?.from || '');
+  const [toValue, setToValue]     = useState(route?.to   || '');
 
   useEffect(() => {
-    setFromValue(route?.from || 'Anna Maria Island');
-    setToValue(route?.to || 'Egmont Key');
-  }, [route]);
+    setFromValue(route?.from || '');
+    setToValue(route?.to   || '');
+  }, [route?.from, route?.to]);
 
-  useEffect(() => {
-    let raf, start;
-    const step = (t) => {
-      if (!start) start = t;
-      const p = Math.min(1, (t - start) / 1400);
-      setRouteProgress(p);
-      if (p < 1) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  const v = STATUS[verdict];
-  const copy = VERDICT_COPY[verdict];
-  const safetyReasons = routeSafety?.reasons || [];
-
+  const v    = STATUS[verdict] || STATUS.go;
+  const copy = VERDICT_COPY[verdict] || VERDICT_COPY.go;
+  const safetyReasons   = routeSafety?.reasons   || [];
   const routeConditions = routeSafety?.conditions || {};
+
   const hourly = routeSafety?.hourly || [
-    { t: '7a', wind: 14, ok: false },
-    { t: '9a', wind: 12, ok: true },
-    { t: '11a', wind: 10, ok: true },
-    { t: '1p', wind: 9, ok: true },
-    { t: '3p', wind: 11, ok: true },
-    { t: '5p', wind: 13, ok: true },
-    { t: '7p', wind: 15, ok: false },
+    { t: '7a',  wind: 14, ok: false },
+    { t: '9a',  wind: 12, ok: true  },
+    { t: '11a', wind: 10, ok: true  },
+    { t: '1p',  wind: 9,  ok: true  },
+    { t: '3p',  wind: 11, ok: true  },
+    { t: '5p',  wind: 13, ok: true  },
+    { t: '7p',  wind: 15, ok: false },
   ];
-  const startWind = routeConditions.wind != null ? routeConditions.wind : '—';
-  const startSub  = routeSafety
-    ? (routeConditions.gust != null ? `${routeConditions.gust} kt gust` : 'No gust data')
-    : 'Forecast unavailable';
+
+  const startWind  = routeConditions.wind        != null ? routeConditions.wind        : '—';
+  const startSub   = routeSafety ? (routeConditions.gust != null ? `${routeConditions.gust} kt gust` : 'No gust data') : 'Forecast unavailable';
   const arrWindVal = routeConditions.arrivalWind != null ? routeConditions.arrivalWind : '—';
   const arrWindSub = routeSafety
-    ? (routeConditions.arrivalWindDir
-        ? `From ${routeConditions.arrivalWindDir}`
-        : (routeConditions.arrivalWind != null ? 'At destination' : 'Forecast unavailable'))
+    ? (routeConditions.arrivalWindDir ? `From ${routeConditions.arrivalWindDir}` : (routeConditions.arrivalWind != null ? 'At destination' : 'Forecast unavailable'))
     : 'Forecast unavailable';
   const depthVal = routeConditions.maxDepthFt != null ? routeConditions.maxDepthFt : '—';
-  const depthSub  = routeSafety
-    ? (routeConditions.maxDepthFt != null ? 'Deepest along route' : 'Unavailable')
-    : 'Unavailable';
-  const safeHour = hourly.find(h => h.ok);
-  const bestWindow = routeSafety ? (
-    safeHour ? `Leave ${safeHour.t}${safeHour.shortForecast ? ` — ${safeHour.shortForecast.toLowerCase()}` : ''}` : 'No safe departure window today'
-  ) : (
-    verdict === 'go' ? 'Leave 9:15 AM — smoothest ride' : verdict === 'wait' ? 'Leave 4:15 PM — waves drop' : 'Sunday 8 AM looks clean'
-  );
+  const depthSub = routeSafety ? (routeConditions.maxDepthFt != null ? 'Deepest along route' : 'Unavailable') : 'Unavailable';
 
-  const sheetH = sheetExpanded ? 540 : 380;
+  const safeHour   = hourly.find(h => h.ok);
+  const bestWindow = routeSafety
+    ? (safeHour ? `Leave ${safeHour.t}${safeHour.shortForecast ? ` — ${safeHour.shortForecast.toLowerCase()}` : ''}` : 'No safe window today')
+    : (verdict === 'go' ? 'Leave 9:15 AM — smoothest ride' : verdict === 'wait' ? 'Leave 4:15 PM — waves drop' : 'Sunday 8 AM looks clean');
 
-  // Fuel range
-  const storedFuel = boat?.id ? parseFloat(localStorage.getItem(`safeseas_fuel_${boat.id}`) || '0') : 0;
-  const fuelLevel  = storedFuel > 0 ? storedFuel : (boat?.fuelLevel || 0);
+  const storedFuel  = boat?.id ? parseFloat(localStorage.getItem(`safeseas_fuel_${boat.id}`) || '0') : 0;
+  const fuelLevel   = storedFuel > 0 ? storedFuel : (boat?.fuelLevel || 0);
   const fuelRangeNm = (boat?.fuelBurn > 0 && boat?.cruiseSpeed > 0 && fuelLevel > 0)
     ? (fuelLevel / boat.fuelBurn) * boat.cruiseSpeed : null;
   const routeDistNm = _routeDistNm(route?.waypoints);
-  const fuelOk = fuelRangeNm == null || routeDistNm === 0 || fuelRangeNm >= routeDistNm;
+  const fuelOk      = fuelRangeNm == null || routeDistNm === 0 || fuelRangeNm >= routeDistNm;
+
+  const windLim = boat?.windLim || 20;
+  const windMax = Math.max(...hourly.map(h => typeof h.wind === 'number' ? h.wind : 0), windLim, 5);
+  const CW = 360, CH = 58;
+  const limitY = CH - (windLim / windMax) * CH;
+
+  const inputStyle = {
+    flex: 1, padding: '11px 13px', borderRadius: 10,
+    border: `1.5px solid ${DB.border}`, background: DB.bg,
+    color: DB.text, fontSize: 14, outline: 'none', fontFamily: 'inherit',
+    transition: 'border-color 0.15s',
+  };
 
   return (
-    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-      <LiveMap accent={accent} route={route} routingActive={routingActive} onPinSet={onPinSet} bottomInset={sheetH} boat={boat} fuelLevel={fuelLevel}/>
-
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 100, zIndex: 500,
-        background: 'linear-gradient(180deg, rgba(6,21,32,0.7), transparent)', pointerEvents: 'none' }}/>
-
-      <div style={{ position: 'absolute', top: 12, left: 16, right: 16, zIndex: 500, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px 8px 10px',
-          background: 'rgba(15,26,38,0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
-          borderRadius: 99, border: '1px solid var(--c-border)' }}>
-          <div style={{ width: 8, height: 8, borderRadius: 99, border: `1.5px solid ${accent}`, background: '#06151E' }}/>
-          <span style={{ fontSize: 12, color: 'var(--c-text)', fontWeight: 600 }}>{route?.from || 'Start'}</span>
-          <Icon name="arrow" size={12} color="var(--c-text-3)" sw={2}/>
-          <Icon name="pin" size={14} color={accent} sw={2}/>
-          <span style={{ fontSize: 12, color: 'var(--c-text)', fontWeight: 600 }}>{route?.to || 'Destination'}</span>
-        </div>
+    <div style={{ padding: '12px 20px 48px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Header */}
+      <div style={{ marginTop: 6 }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: DB.muted, fontWeight: 700, textTransform: 'uppercase' }}>Navigation</div>
+        <div style={{ fontSize: 26, color: DB.text, fontWeight: 800, letterSpacing: '-0.02em', marginTop: 2 }}>Trips & Plans</div>
       </div>
 
-      <div style={{
-        position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 500,
-        background: 'linear-gradient(180deg, rgba(11,26,38,0.96), var(--c-bg) 30%)',
-        backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
-        borderTopLeftRadius: 28, borderTopRightRadius: 28,
-        borderTop: '1px solid var(--c-border)',
-        boxShadow: '0 -20px 60px rgba(0,0,0,0.5)',
-        height: sheetH,
-        transition: 'height 0.35s cubic-bezier(.4,1.4,.6,1)',
-        overflow: 'hidden',
-        display: 'flex', flexDirection: 'column',
-      }}>
-        <button onClick={() => setSheetExpanded(!sheetExpanded)} style={{
-          all: 'unset', cursor: 'pointer', padding: '10px 0 4px', display: 'flex', justifyContent: 'center',
+      {/* Route planner */}
+      <div style={{ background: DB.card, border: `1px solid ${DB.border}`, borderRadius: 16, padding: '16px 18px' }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: DB.muted, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 14 }}>Plan a Route</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 16 }}>
+              <div style={{ width: 11, height: 11, borderRadius: 99, border: `2.5px solid ${accent}`, background: '#fff' }}/>
+              <div style={{ width: 2, height: 22, background: `${accent}40`, marginTop: 3 }}/>
+            </div>
+            <input value={fromValue} onChange={e => setFromValue(e.target.value)}
+              placeholder="From — departure point" style={inputStyle}/>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 3 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: 16 }}>
+              <div style={{ width: 11, height: 11, borderRadius: 3, background: accent }}/>
+            </div>
+            <input value={toValue} onChange={e => setToValue(e.target.value)}
+              placeholder="To — destination" style={inputStyle}/>
+          </div>
+        </div>
+        <button onClick={() => { setSaved(false); onPlan && onPlan({ from: fromValue, to: toValue }); }} style={{
+          all: 'unset', cursor: 'pointer', marginTop: 14, width: '100%', boxSizing: 'border-box',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          padding: '12px', borderRadius: 11, background: accent, color: '#fff',
+          fontWeight: 700, fontSize: 14, letterSpacing: '-0.01em', boxShadow: `0 4px 14px ${accent}44`,
         }}>
-          <div style={{ width: 40, height: 5, borderRadius: 99, background: 'var(--c-text-5)' }}/>
+          <Icon name="compass" size={16} color="#fff" sw={2}/>
+          Plan Route
         </button>
+      </div>
 
-        <div style={{ padding: '8px 20px 20px', flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{
-            background: v.bg, border: `1.5px solid ${v.border}`, borderRadius: 18, padding: '18px 18px 20px',
-            position: 'relative', overflow: 'hidden',
-          }}>
-            {pulse && (
-              <div style={{
-                position: 'absolute', inset: -2, borderRadius: 18,
-                border: `1.5px solid ${v.fg}`,
-                animation: 'verdictPulse 2.2s ease-out infinite',
-                pointerEvents: 'none', opacity: 0.6,
-              }}/>
-            )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 99, background: v.fg, boxShadow: `0 0 12px ${v.fg}` }}/>
-              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', color: v.fg }}>{v.label} TODAY</span>
-            </div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--c-text)', letterSpacing: '-0.02em', lineHeight: 1.15 }}>
-              {verdict === 'go' && 'Clear all day.'}
-              {verdict === 'wait' && 'Hold till afternoon.'}
-              {verdict === 'nogo' && 'Stay at the dock.'}
-            </div>
-            <div style={{ fontSize: 14.5, color: 'var(--c-text-2)', marginTop: 8, lineHeight: 1.4 }}>{copy.line}</div>
-            {routeSafety && (
-              <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 14, background: '#0E1D29', border: '1px solid #1C3246' }}>
-                <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Safety details</div>
-                {safetyReasons.length ? (
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    {safetyReasons.map((reason, index) => (
-                      <div key={index} style={{ fontSize: 12, color: 'var(--c-text-2)', lineHeight: 1.4 }}>• {reason}</div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 12, color: 'var(--c-text-2)' }}>No critical safety issues detected for this route.</div>
-                )}
+      {/* Go / Wait / No-Go verdict */}
+      <div style={{ background: v.bg, border: `1.5px solid ${v.border}`, borderRadius: 16, padding: '18px 18px 20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 99, background: v.fg, boxShadow: `0 0 8px ${v.fg}` }}/>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', color: v.fg }}>{v.label}</span>
+          </div>
+          <span style={{ fontSize: 10, color: v.fg, fontWeight: 600, opacity: 0.65 }}>TODAY</span>
+        </div>
+        <div style={{ fontSize: 24, fontWeight: 800, color: DB.text, letterSpacing: '-0.02em', lineHeight: 1.2, marginBottom: 8 }}>
+          {verdict === 'go'   && 'Clear all day.'}
+          {verdict === 'wait' && 'Hold till afternoon.'}
+          {verdict === 'nogo' && 'Stay at the dock.'}
+        </div>
+        <div style={{ fontSize: 13, color: DB.muted, lineHeight: 1.5 }}>{copy.line}</div>
+        {safetyReasons.length > 0 && (
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${v.border}`, display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {safetyReasons.map((r, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 12, color: v.fg, lineHeight: 1.4 }}>
+                <span style={{ flexShrink: 0, marginTop: 1 }}>•</span>{r}
               </div>
-            )}
+            ))}
           </div>
+        )}
+        {!safetyReasons.length && routeSafety && (
+          <div style={{ marginTop: 10, fontSize: 12, color: v.fg, opacity: 0.7 }}>No critical issues detected for this route.</div>
+        )}
+      </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
-            background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 16 }}>
-            <div style={{ width: 44, height: 44, borderRadius: 12, background: `${accent}1F`, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
-              <Icon name="clock" size={22} color={accent} sw={2}/>
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Best window</div>
-              <div style={{ fontSize: 17, color: 'var(--c-text)', fontWeight: 700, marginTop: 2, letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>{bestWindow}</div>
-            </div>
-          </div>
-
-          {/* Fuel range card */}
-          {boat?.fuelBurn > 0 && boat?.cruiseSpeed > 0 && boat?.fuelCap > 0 && (
-            <FuelCard boat={boat} fuelLevel={fuelLevel} fuelRangeNm={fuelRangeNm} routeDistNm={routeDistNm} fuelOk={fuelOk} accent={accent}/>
-          )}
-
-          <div style={{ background: 'var(--c-surface-alt)', border: '1px solid var(--c-border)', borderRadius: 18, padding: 16, display: 'grid', gap: 12 }}>
-            <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Plan your trip</div>
-            <div style={{ display: 'grid', gap: 8 }}>
-              <input value={fromValue} onChange={e => setFromValue(e.target.value)} placeholder="From" style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: '1px solid var(--c-border)', background: 'var(--c-bg)', color: 'var(--c-text)', fontSize: 15 }} />
-              <input value={toValue} onChange={e => setToValue(e.target.value)} placeholder="To" style={{ width: '100%', padding: '12px 14px', borderRadius: 14, border: '1px solid var(--c-border)', background: 'var(--c-bg)', color: 'var(--c-text)', fontSize: 15 }} />
-            </div>
-            <button onClick={() => { setSaved(false); onPlan && onPlan({ from: fromValue, to: toValue }); }} style={{ all: 'unset', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '14px 18px', borderRadius: 15, background: accent, color: '#06151E', fontWeight: 700, fontSize: 15, textTransform: 'uppercase' }}>
-              Plan route
-            </button>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
-              Conditions along the route
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <ConditionTile icon="wind"   label="Depart"    value={startWind} unit="kt" sub={startSub}/>
-              <ConditionTile icon="wind"   label="Arrival"   value={arrWindVal} unit="kt" sub={arrWindSub}/>
-              <ConditionTile icon="anchor" label="Max depth" value={depthVal}   unit="ft" sub={depthSub}/>
-            </div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
-              Hourly wind · {(boat && boat.windLim) || 0} kt limit
-            </div>
-            <div style={{ position: 'relative', background: 'var(--c-surface-alt)', borderRadius: 14, border: '1px solid var(--c-border-soft)', padding: '16px 12px 10px' }}>
-              <div style={{ position: 'absolute', left: 12, right: 12, top: 16 + (1 - (boat?.windLim || 20)/30) * 60, height: 1, background: `${STATUS.wait.fg}33`, borderTop: `1px dashed ${STATUS.wait.fg}66`, pointerEvents: 'none' }}/>
-              <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: 60, gap: 4 }}>
-                {hourly.map((h, i) => {
-                  const windValue = typeof h.wind === 'number' ? h.wind : 0;
-                  const hh = Math.max(8, Math.min(60, (windValue / 30) * 60));
-                  const ok = typeof h.ok === 'boolean' ? h.ok : (boat ? windValue <= (boat.windLim || 0) : true);
-                  return (
-                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                      <div style={{ width: '70%', height: hh, borderRadius: 3, background: ok ? accent : STATUS.wait.fg, opacity: ok ? 1 : 0.7 }}/>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
-                {hourly.map((h, i) => (
-                  <div key={i} style={{ flex: 1, textAlign: 'center', fontSize: 10, color: 'var(--c-text-3)', fontVariantNumeric: 'tabular-nums' }}>{h.t}</div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <button onClick={() => {
-            setSaved(true);
-            const savedStatus = routeSafety?.verdict || verdict;
-            const reasonText = routeSafety?.reasons?.length ? `Reasons: ${routeSafety.reasons.join(' | ')}` : '';
-            onSave && onSave({
-              name: `${route?.from || fromValue || 'Start'} → ${route?.to || toValue || 'Destination'}`,
-              from: route?.from || fromValue || 'Anna Maria Island',
-              to: route?.to || toValue || 'Egmont Key',
-              notes: `Boat: ${boat ? boat.name : 'Unknown'} · ${boat ? boat.type : ''}${reasonText ? ' · ' + reasonText : ''}`,
-              status: savedStatus,
-              boatId: boat?.id || null,
-            });
-          }} style={{
-            all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-            height: 56, borderRadius: 16,
-            background: saved ? '#0F3D2E' : accent, color: saved ? STATUS.go.fg : '#06151E',
-            border: saved ? `1.5px solid ${STATUS.go.border}` : 'none',
-            fontWeight: 700, fontSize: 16, letterSpacing: '-0.01em',
-            boxShadow: saved ? 'none' : `0 6px 20px ${accent}33`,
-            marginTop: 4,
-          }}>
-            <Icon name={saved ? 'check' : 'bookmark'} size={20} color={saved ? STATUS.go.fg : '#06151E'} sw={2.2}/>
-            {saved ? 'Trip saved' : 'Save trip'}
-          </button>
+      {/* Best departure window */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: DB.card, border: `1px solid ${DB.border}`, borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+        <div style={{ width: 40, height: 40, borderRadius: 11, background: `${accent}18`, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+          <Icon name="clock" size={20} color={accent} sw={2}/>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: DB.muted, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Best Departure Window</div>
+          <div style={{ fontSize: 16, color: DB.text, fontWeight: 700, marginTop: 3, letterSpacing: '-0.01em' }}>{bestWindow}</div>
         </div>
       </div>
 
-      <style>{`@keyframes verdictPulse {
-        0% { transform: scale(1); opacity: 0.7; }
-        70% { transform: scale(1.04); opacity: 0; }
-        100% { transform: scale(1.04); opacity: 0; }
-      }`}</style>
+      {/* Conditions along route */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: DB.muted, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 10 }}>Conditions Along Route</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <ConditionTile icon="wind"   label="Depart"    value={startWind}  unit="kt" sub={startSub}  accent={accent}/>
+          <ConditionTile icon="wind"   label="Arrival"   value={arrWindVal} unit="kt" sub={arrWindSub} accent={accent}/>
+          <ConditionTile icon="anchor" label="Max depth" value={depthVal}   unit="ft" sub={depthSub}  accent={accent}/>
+        </div>
+      </div>
+
+      {/* Hourly wind chart */}
+      <div style={{ background: DB.card, border: `1px solid ${DB.border}`, borderRadius: 14, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: DB.muted, letterSpacing: '0.12em', textTransform: 'uppercase' }}>Hourly Wind</div>
+          {windLim > 0 && <div style={{ fontSize: 11, color: STATUS.wait.fg, fontWeight: 700 }}>{windLim} kt limit</div>}
+        </div>
+        <svg width="100%" viewBox={`0 0 ${CW} ${CH + 22}`} style={{ display: 'block', overflow: 'visible' }}>
+          {/* Limit line */}
+          {limitY >= 0 && limitY <= CH && (
+            <line x1="0" y1={limitY} x2={CW} y2={limitY} stroke={STATUS.wait.fg} strokeWidth="1.2" strokeDasharray="5 3" opacity="0.55"/>
+          )}
+          {/* Bars */}
+          {hourly.map((h, i) => {
+            const wind = typeof h.wind === 'number' ? h.wind : 0;
+            const bH   = Math.max(4, (wind / windMax) * CH);
+            const col  = CW / hourly.length;
+            const bW   = col - 6;
+            const bX   = i * col + 3;
+            const ok   = typeof h.ok === 'boolean' ? h.ok : wind <= windLim;
+            return <rect key={i} x={bX} y={CH - bH} width={bW} height={bH} rx="3" fill={ok ? accent : STATUS.wait.fg} opacity={ok ? 0.92 : 0.75}/>;
+          })}
+          {/* Wind values */}
+          {hourly.map((h, i) => {
+            const wind = typeof h.wind === 'number' ? h.wind : 0;
+            const bH   = Math.max(4, (wind / windMax) * CH);
+            const col  = CW / hourly.length;
+            return (
+              <text key={i} x={i * col + col / 2} y={CH - bH - 3} fontSize="7.5" textAnchor="middle" fill={DB.muted}>{wind}</text>
+            );
+          })}
+          {/* Hour labels */}
+          {hourly.map((h, i) => (
+            <text key={i} x={i * (CW / hourly.length) + (CW / hourly.length) / 2} y={CH + 15}
+              fontSize="9" textAnchor="middle" fill={DB.muted}>{h.t}</text>
+          ))}
+        </svg>
+      </div>
+
+      {/* Fuel card */}
+      {boat?.fuelBurn > 0 && boat?.cruiseSpeed > 0 && boat?.fuelCap > 0 && (
+        <FuelCard boat={boat} fuelLevel={fuelLevel} fuelRangeNm={fuelRangeNm} routeDistNm={routeDistNm} fuelOk={fuelOk} accent={accent}/>
+      )}
+
+      {/* Save trip */}
+      <button onClick={() => {
+        setSaved(true);
+        const savedStatus = routeSafety?.verdict || verdict;
+        const reasonText  = routeSafety?.reasons?.length ? `Reasons: ${routeSafety.reasons.join(' | ')}` : '';
+        onSave && onSave({
+          name:   `${route?.from || fromValue || 'Start'} → ${route?.to || toValue || 'Destination'}`,
+          from:   route?.from || fromValue || 'Start',
+          to:     route?.to   || toValue   || 'Destination',
+          notes:  `Boat: ${boat ? boat.name : 'Unknown'} · ${boat ? boat.type : ''}${reasonText ? ' · ' + reasonText : ''}`,
+          status: savedStatus,
+          boatId: boat?.id || null,
+        });
+      }} style={{
+        all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+        height: 52, borderRadius: 14, width: '100%', boxSizing: 'border-box',
+        background: saved ? DB.greenSoft : accent, color: saved ? DB.green : '#fff',
+        border: saved ? `1.5px solid #86EFAC` : 'none',
+        fontWeight: 700, fontSize: 15, letterSpacing: '-0.01em',
+        boxShadow: saved ? 'none' : `0 4px 16px ${accent}44`,
+      }}>
+        <Icon name={saved ? 'check' : 'bookmark'} size={19} color={saved ? DB.green : '#fff'} sw={2.2}/>
+        {saved ? 'Trip saved' : 'Save trip'}
+      </button>
     </div>
   );
 }
@@ -2348,8 +2977,8 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
       {/* Active boat card */}
       <Card style={{ padding: 18 }}>
         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-          <div style={{ width: 92, height: 64, background: 'var(--c-surface-alt)', borderRadius: 10, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
-            <BoatArt type={(boat && boat.type) || 'Center console'} color={accent} size={56}/>
+          <div style={{ width: 92, minHeight: 64, background: 'var(--c-surface-alt)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', padding: 4 }}>
+            <BoatArt type={(boat && boat.type) || 'Center console'} color={accent} size={52}/>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Currently selected</div>
@@ -2419,13 +3048,14 @@ function BoatScreen({ accent, boat, setBoat, boats, addBoat, deleteBoat, presetB
                 <div key={b.id || b.name} style={{ position: 'relative' }}>
                   <button onClick={() => setBoat(b)} style={{
                     all: 'unset', cursor: 'pointer', display: 'block', width: '100%',
+                    boxSizing: 'border-box',
                     background: active ? `${accent}14` : 'var(--c-surface)',
                     border: `1.5px solid ${active ? accent : 'var(--c-border)'}`,
                     borderRadius: 14, padding: '14px 12px 12px',
                     transition: 'all 0.18s ease',
                     boxShadow: active ? `0 0 0 4px ${accent}1A` : 'none',
                   }}>
-                    <div style={{ height: 56, display: 'grid', placeItems: 'center' }}>
+                    <div style={{ minHeight: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                       <BoatArt type={b.type || 'Center console'} color={active ? accent : 'var(--c-text-2)'} size={50}/>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
@@ -2800,7 +3430,7 @@ function FriendsSection({ accent, authToken, user, onOpenDm }) {
   );
 }
 
-function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorChange, colorMode, onColorModeChange, onDeleteAccount, authToken, onOpenDm }) {
+function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorChange, onDeleteAccount, authToken, onOpenDm }) {
   const [deleteMode, setDeleteMode] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteError, setDeleteError] = useState('');
@@ -2877,31 +3507,6 @@ function SettingsScreen({ accent, user, onLogout, profileColor, onProfileColorCh
               transition: 'all 0.15s',
             }}/>
           ))}
-        </div>
-      </div>
-
-      {/* Appearance */}
-      <div style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border)', borderRadius: 18, padding: '14px 18px' }}>
-        <div style={{ fontSize: 11, color: 'var(--c-text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 14 }}>Appearance</div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: 14, color: 'var(--c-text)', fontWeight: 600 }}>Dark mode</div>
-            <div style={{ fontSize: 12, color: 'var(--c-text-4)', marginTop: 2 }}>Use the dark marine theme</div>
-          </div>
-          <button onClick={() => onColorModeChange(colorMode === 'dark' ? 'light' : 'dark')} style={{
-            all: 'unset', cursor: 'pointer',
-            width: 50, height: 28, borderRadius: 99,
-            background: colorMode === 'dark' ? accent : 'var(--c-text-5)',
-            position: 'relative', transition: 'background 0.2s',
-            boxShadow: colorMode === 'dark' ? `0 0 0 1px ${accent}66` : 'none',
-            flexShrink: 0,
-          }}>
-            <div style={{
-              position: 'absolute', top: 3, left: colorMode === 'dark' ? 25 : 3,
-              width: 22, height: 22, borderRadius: 99, background: 'white',
-              transition: 'left 0.2s',
-            }}/>
-          </button>
         </div>
       </div>
 
@@ -3075,7 +3680,7 @@ function DirectMessageModal({ friend, authToken, user, profileColor, accent, onC
   const friendInitial = (friend.name || '?')[0].toUpperCase();
 
   return (
-    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 94, background: 'var(--c-bg)', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
+    <div style={{ height: '100%', background: 'var(--c-bg)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--c-border)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
         <button onClick={onClose} style={{ all: 'unset', cursor: 'pointer', width: 34, height: 34, borderRadius: 10, background: 'var(--c-surface-alt)', display: 'grid', placeItems: 'center' }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--c-text)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -3266,7 +3871,7 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage, profileCo
   const myAvatarColor = profileColor || accentColor;
 
   return (
-    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 94, display: 'flex', flexDirection: 'column', background: 'var(--c-bg)' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--c-bg)', overflow: 'hidden' }}>
 
       {/* Header */}
       <div style={{ padding: '18px 20px 12px', borderBottom: '1px solid var(--c-border)', flexShrink: 0 }}>
@@ -3493,6 +4098,2734 @@ function ChatScreen({ accent, authToken, user, routeDep, onNewMessage, profileCo
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// WEB DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DB = {
+  navy: '#1B3A5C', navyHover: '#22497A', navyActive: '#2B6CB0',
+  bg: '#EEF2F8', card: '#FFFFFF', border: '#E2E8F0',
+  text: '#1E293B', muted: '#64748B',
+  blue: '#2563EB', blueSoft: '#EFF6FF',
+  green: '#16A34A', greenSoft: '#F0FDF4',
+  amber: '#D97706', amberSoft: '#FFFBEB',
+  red: '#DC2626', redSoft: '#FEF2F2',
+  orange: '#EA580C',
+};
+
+async function _fetchFuelDocks(lat, lon) {
+  const d = 0.25;
+  const bbox = `${lat-d},${lon-d},${lat+d},${lon+d}`;
+  const q = `[out:json][timeout:12];(`+
+    `node["waterway"="fuel"](${bbox});`+
+    `node["seamark:type"="fuel_station"](${bbox});`+
+    `node["amenity"="fuel"]["boat"="yes"](${bbox});`+
+    `node["fuel:marine"="yes"](${bbox});`+
+  `);out 8;`;
+  try {
+    const r = await fetch('https://overpass-api.de/api/interpreter', { method:'POST', body:`data=${encodeURIComponent(q)}`, headers:{'Content-Type':'application/x-www-form-urlencoded'} });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.elements||[]).map(el => ({
+      name: el.tags?.name || el.tags?.operator || 'Fuel Dock',
+      lat: el.lat, lon: el.lon,
+      dist: Math.round(_haversineNm(lat,lon,el.lat,el.lon)*10)/10,
+      price: el.tags?.['fuel:marine'] || el.tags?.fuel_price || null,
+    })).filter(d => d.dist < 20).sort((a,b)=>a.dist-b.dist).slice(0,5);
+  } catch { return []; }
+}
+
+async function _fetchMarinas(lat, lon) {
+  const d = 0.3;
+  const bbox = `${lat-d},${lon-d},${lat+d},${lon+d}`;
+  const q = `[out:json][timeout:12];(node["leisure"="marina"](${bbox});way["leisure"="marina"](${bbox});node["amenity"="boat_rental"](${bbox}););out 8 center;`;
+  try {
+    const r = await fetch('https://overpass-api.de/api/interpreter', { method:'POST', body:`data=${encodeURIComponent(q)}`, headers:{'Content-Type':'application/x-www-form-urlencoded'} });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.elements||[]).map(el => {
+      const eLat = el.lat ?? el.center?.lat;
+      const eLon = el.lon ?? el.center?.lon;
+      if (!eLat) return null;
+      return { name: el.tags?.name || 'Marina', lat: eLat, lon: eLon, dist: Math.round(_haversineNm(lat,lon,eLat,eLon)*10)/10 };
+    }).filter(Boolean).filter(m=>m.dist<25).sort((a,b)=>a.dist-b.dist).slice(0,5);
+  } catch { return []; }
+}
+
+// ── Sidebar ──────────────────────────────────────────────────────────────────
+function DashSidebar({ activeView, onNavigate, user, boat, profileColor, chatUnread, alertCount, vesselAlertCount, onLogout }) {
+  const NAV_GROUPS = [
+    { items: [
+      { id:'home',     label:'Home',            icon:'home'    },
+      { id:'chat',     label:'Chat',             icon:'chat',   badge: chatUnread },
+    ]},
+    { label: 'Navigate', items: [
+      { id:'navigate', label:'Navigate',        icon:'compass'  },
+      { id:'map',      label:'Map',             icon:'map'      },
+      { id:'vessels',  label:'Live Vessels',    icon:'boat',    badge: vesselAlertCount },
+      { id:'marinas',  label:'Marinas & Ramps', icon:'anchor'   },
+    ]},
+    { label: 'Conditions', items: [
+      { id:'weather',    label:'Weather',    icon:'wind'    },
+      { id:'windy',      label:'Windy',      icon:'wind'    },
+      { id:'tides',      label:'Tide Gauge', icon:'anchor'  },
+      { id:'sea-state',  label:'Sea State',  icon:'wind'    },
+    ]},
+    { label: 'Safety', items: [
+      { id:'alerts',   label:'Alerts',   icon:'anchor', badge: alertCount },
+      { id:'hazards',  label:'Hazards',  icon:'anchor'  },
+    ]},
+    { label: 'Trips', items: [
+      { id:'trips',      label:'Trips & Plans', icon:'bookmark' },
+      { id:'trip-logs',  label:'Trip Logger',   icon:'compass'  },
+      { id:'fuel',       label:'Fuel',          icon:'anchor'   },
+    ]},
+    { items: [
+      { id:'boats',      label:'My Boats', icon:'boat'     },
+      { id:'settings',   label:'Settings', icon:'settings' },
+    ]},
+  ];
+  return (
+    <div style={{ width:214, minWidth:214, height:'100vh', background:DB.navy, color:'white', display:'flex', flexDirection:'column', flexShrink:0, zIndex:100, userSelect:'none' }}>
+      <div style={{ padding:'16px 14px 14px', borderBottom:'1px solid rgba(255,255,255,0.09)' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <div style={{ width:40, height:40, borderRadius:10, background:'rgba(255,255,255,0.13)', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+            <Icon name="boat" size={21} color="white" sw={1.6}/>
+          </div>
+          <div>
+            <div style={{ fontSize:13.5, fontWeight:800, letterSpacing:'0.07em', color:'white', lineHeight:1.1 }}>SAFE SEAS</div>
+            <div style={{ fontSize:8.5, color:'rgba(255,255,255,0.42)', lineHeight:1.35, marginTop:2 }}>The Waze for Recreational Boaters</div>
+          </div>
+        </div>
+      </div>
+      <nav style={{ flex:1, padding:'6px 0', overflowY:'auto' }}>
+        {NAV_GROUPS.map((group, gi) => (
+          <div key={gi} style={{ marginTop: gi > 0 ? 10 : 0, paddingTop: gi > 0 ? 10 : 0, borderTop: gi > 0 ? '1px solid rgba(255,255,255,0.08)' : 'none' }}>
+            {group.label && (
+              <div style={{ padding:'2px 14px 5px', fontSize:9.5, fontWeight:700, color:'rgba(255,255,255,0.34)', textTransform:'uppercase', letterSpacing:'0.08em' }}>
+                {group.label}
+              </div>
+            )}
+            {group.items.map(item => {
+              const on = activeView === item.id;
+              const bd = item.badge > 0 ? item.badge : 0;
+              return (
+                <button key={item.id} onClick={() => onNavigate(item.id)} style={{
+                  all:'unset', cursor:'pointer', width:'100%', boxSizing:'border-box',
+                  display:'flex', alignItems:'center', gap:9, padding:'8px 14px',
+                  borderLeft:`3px solid ${on ? '#60C8F5' : 'transparent'}`,
+                  background: on ? 'rgba(255,255,255,0.11)' : 'transparent',
+                  color: on ? 'white' : 'rgba(255,255,255,0.58)',
+                  fontSize:13, fontWeight: on ? 600 : 400, transition:'background 0.1s',
+                }}
+                  onMouseEnter={e => { if(!on) e.currentTarget.style.background='rgba(255,255,255,0.07)'; }}
+                  onMouseLeave={e => { if(!on) e.currentTarget.style.background='transparent'; }}
+                >
+                  <Icon name={item.icon} size={15} color={on?'white':'rgba(255,255,255,0.58)'} sw={on?2.2:1.8}/>
+                  <span style={{ flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.label}</span>
+                  {bd > 0 && <span style={{ background:'#EF4444', color:'white', borderRadius:99, fontSize:9.5, fontWeight:700, padding:'1px 6px', lineHeight:'15px' }}>{bd > 99 ? '99+' : bd}</span>}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+
+      {/* SOS button */}
+      <button onClick={() => onNavigate('sos')} style={{
+        all: 'unset', cursor: 'pointer', margin: '6px 10px 2px', borderRadius: 10, boxSizing: 'border-box',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '9px 14px',
+        background: 'rgba(239,68,68,0.15)', border: '1.5px solid rgba(239,68,68,0.45)',
+        color: '#FCA5A5', fontSize: 12.5, fontWeight: 700, letterSpacing: '0.04em',
+        transition: 'background 0.15s, border-color 0.15s',
+      }}
+        onMouseEnter={e => { e.currentTarget.style.background='rgba(239,68,68,0.28)'; e.currentTarget.style.borderColor='rgba(239,68,68,0.75)'; }}
+        onMouseLeave={e => { e.currentTarget.style.background='rgba(239,68,68,0.15)'; e.currentTarget.style.borderColor='rgba(239,68,68,0.45)'; }}
+      >
+        🚨 EMERGENCY
+      </button>
+
+      <div style={{ borderTop:'1px solid rgba(255,255,255,0.09)', padding:12, marginTop:6 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:9, marginBottom: boat ? 10 : 0 }}>
+          <div style={{ width:34, height:34, borderRadius:'50%', background: profileColor||'#22E3D0', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:700, color:'#06151E', flexShrink:0, cursor:'pointer' }} onClick={() => onNavigate('settings')}>
+            {(user?.name||'U')[0].toUpperCase()}
+          </div>
+          <div style={{ overflow:'hidden', flex:1, minWidth:0 }}>
+            <div style={{ fontSize:12.5, fontWeight:600, color:'white', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{user?.name||'User'}</div>
+            <div style={{ fontSize:10.5, color:'rgba(255,255,255,0.42)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{boat?.name||'No boat selected'}</div>
+          </div>
+        </div>
+        {boat && (
+          <div style={{ background:'rgba(255,255,255,0.07)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:8, padding:'7px 10px', cursor:'pointer' }} onClick={() => onNavigate('boats')}>
+            <div style={{ fontSize:9, color:'rgba(255,255,255,0.38)', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:3 }}>Boat Profile</div>
+            <div style={{ fontSize:12, color:'white', fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{boat.type||'Motorboat'} · {boat.name}</div>
+            {(boat.height||boat.mastHeight) && <div style={{ fontSize:11, color:'rgba(255,255,255,0.45)', marginTop:2 }}>Height {boat.height||boat.mastHeight}</div>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Top Bar ──────────────────────────────────────────────────────────────────
+function DashTopBar({ searchVal, setSearchVal, onSearch, user, chatUnread, profileColor, accent, alertCount, onNavigate }) {
+  return (
+    <div style={{ background:DB.card, borderBottom:`1px solid ${DB.border}`, padding:'10px 16px', display:'flex', alignItems:'center', gap:12, flexShrink:0, zIndex:50 }}>
+      <div style={{ flex:1, position:'relative', maxWidth:680 }}>
+        <div style={{ position:'absolute', left:12, top:'50%', transform:'translateY(-50%)', pointerEvents:'none' }}>
+          <Icon name="search" size={16} color={DB.muted}/>
+        </div>
+        <input value={searchVal} onChange={e=>setSearchVal(e.target.value)} onKeyDown={onSearch}
+          placeholder="Where do you want to go on the water?"
+          style={{ width:'100%', boxSizing:'border-box', paddingLeft:38, paddingRight:40, paddingTop:9, paddingBottom:9, border:`1.5px solid ${DB.border}`, borderRadius:24, fontSize:13.5, color:DB.text, background:'#F8FAFC', outline:'none', fontFamily:'inherit' }}
+          onFocus={e => e.target.style.borderColor = accent}
+          onBlur={e => e.target.style.borderColor = DB.border}
+        />
+        <span style={{ position:'absolute', right:12, top:'50%', transform:'translateY(-50%)', fontSize:16, cursor:'pointer' }}>🎤</span>
+      </div>
+      {[
+        { icon: null, emoji:'🔔', badge: alertCount, onClick: () => onNavigate('alerts') },
+        { icon:'chat', badge: chatUnread, onClick: () => onNavigate('chat') },
+      ].map((btn, i) => (
+        <button key={i} onClick={btn.onClick} style={{ all:'unset', cursor:'pointer', position:'relative', width:36, height:36, display:'flex', alignItems:'center', justifyContent:'center', borderRadius:10, background:'#F1F5F9', flexShrink:0 }}>
+          {btn.emoji ? <span style={{ fontSize:18 }}>{btn.emoji}</span> : <Icon name={btn.icon} size={18} color={DB.muted}/>}
+          {btn.badge > 0 && <span style={{ position:'absolute', top:4, right:4, minWidth:14, height:14, borderRadius:99, background:'#EF4444', color:'white', fontSize:9, fontWeight:800, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 2px' }}>{btn.badge}</span>}
+        </button>
+      ))}
+      <div style={{ width:36, height:36, borderRadius:'50%', background: profileColor||'#22E3D0', display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, fontWeight:700, color:'#06151E', cursor:'pointer', flexShrink:0 }} onClick={() => onNavigate('settings')}>
+        {(user?.name||'U')[0].toUpperCase()}
+      </div>
+    </div>
+  );
+}
+
+// ── Info Cards Strip ─────────────────────────────────────────────────────────
+function DashInfoCards({ boat, fuelRangeMi, fuelPct, nextBridge, weather, accent, onPickBoat, onSOS }) {
+  const tempF = weather?.airTemp_f ?? weather?.waterTemp_f;
+  const cards = [
+    {
+      id:'boat', label:'BOAT PROFILE', accent: DB.blue, onClick: onPickBoat,
+      content: boat ? (
+        <>
+          <div style={{ fontSize:14.5, fontWeight:700, color:DB.text, lineHeight:1.2 }}>{boat.type||'Motorboat'} <span style={{ fontWeight:400, color:DB.muted, fontSize:12.5 }}>{boat.name}</span></div>
+          {(boat.height||boat.mastHeight) && <div style={{ fontSize:12, color:DB.blue, fontWeight:600, marginTop:4 }}>Height {boat.height||boat.mastHeight}</div>}
+        </>
+      ) : <div style={{ fontSize:13, color:DB.blue, fontWeight:600, cursor:'pointer' }}>Add a Boat →</div>,
+    },
+    {
+      id:'fuel', label:'FUEL RANGE', accent: DB.green,
+      content: (
+        <>
+          <div style={{ fontSize:19, fontWeight:700, color:DB.text, lineHeight:1 }}>{fuelRangeMi} <span style={{ fontSize:12, fontWeight:600, color:DB.muted }}>mi</span></div>
+          <div style={{ marginTop:7, height:4, borderRadius:99, background:'#E2E8F0', overflow:'hidden' }}>
+            <div style={{ height:'100%', width:`${fuelPct}%`, borderRadius:99, background: fuelPct>30 ? DB.green : fuelPct>15 ? DB.amber : DB.red, transition:'width 0.4s' }}/>
+          </div>
+          <div style={{ fontSize:11, color:DB.muted, marginTop:4 }}>{fuelPct}% Remaining</div>
+        </>
+      ),
+    },
+    {
+      id:'bridge', label:'NEXT BRIDGE', accent: DB.orange,
+      content: nextBridge ? (
+        <>
+          <div style={{ fontSize:13.5, fontWeight:700, color:DB.text, lineHeight:1.25 }}>{nextBridge.name||'Upcoming Bridge'}</div>
+          <div style={{ fontSize:12.5, fontWeight:700, color: nextBridge.verClr_ft<25 ? DB.red : DB.amber, marginTop:4 }}>Clearance {nextBridge.verClr_ft}ft</div>
+          <div style={{ fontSize:11, color:DB.muted, marginTop:2 }}>{nextBridge.dist_km} km away</div>
+        </>
+      ) : <div style={{ fontSize:12.5, color:DB.muted, paddingTop:4 }}>No bridges on active route</div>,
+    },
+    {
+      id:'weather', label:'WEATHER', accent:'#0EA5E9',
+      content: weather ? (
+        <>
+          {tempF != null && <div style={{ fontSize:19, fontWeight:700, color:DB.text, lineHeight:1 }}>{tempF}°F</div>}
+          {weather.waveHeight_ft != null && <div style={{ fontSize:12, color:DB.muted, marginTop:3 }}>Waves {weather.waveHeight_ft}ft</div>}
+          {weather.windSpeed_kt != null && <div style={{ fontSize:12, color:DB.muted }}>Wind {weather.windSpeed_kt}kt{weather.windGust_kt ? ` G${weather.windGust_kt}` : ''}</div>}
+        </>
+      ) : <div style={{ fontSize:12, color:DB.muted, paddingTop:4 }}>Fetching conditions…</div>,
+    },
+    {
+      id:'sos', label:'EMERGENCY', cardBg: DB.red, accent:'white', noArrow:true, onClick: onSOS,
+      content: (
+        <>
+          <div style={{ fontSize:15, fontWeight:800, color:'white', lineHeight:1.2 }}>Emergency</div>
+          <div style={{ fontSize:12, color:'rgba(255,255,255,0.8)', marginTop:3, fontWeight:600 }}>Tap for Help</div>
+          <div style={{ fontSize:10.5, color:'rgba(255,255,255,0.6)', marginTop:5, lineHeight:1.4 }}>MAYDAY script · Coast Guard contacts</div>
+        </>
+      ),
+    },
+  ];
+  return (
+    <div style={{ background:DB.bg, padding:'8px 10px', display:'flex', gap:8, flexShrink:0 }}>
+      {cards.map(card => (
+        <div key={card.id} onClick={card.onClick}
+          style={{ flex:1, minWidth:0, background: card.cardBg||DB.card, border:`1px solid ${card.cardBg ? 'transparent' : DB.border}`, borderRadius:12, padding:'10px 12px', cursor: card.onClick || card.id==='sos' ? 'pointer' : 'default', boxShadow:'0 1px 4px rgba(0,0,0,0.06)', transition:'transform 0.12s, box-shadow 0.12s', boxSizing:'border-box' }}
+          onMouseEnter={e => { e.currentTarget.style.transform='translateY(-1px)'; e.currentTarget.style.boxShadow='0 4px 14px rgba(0,0,0,0.1)'; }}
+          onMouseLeave={e => { e.currentTarget.style.transform='none'; e.currentTarget.style.boxShadow='0 1px 4px rgba(0,0,0,0.06)'; }}
+        >
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:7 }}>
+            <span style={{ fontSize:9.5, fontWeight:700, color: card.cardBg ? 'rgba(255,255,255,0.55)' : card.accent || DB.blue, letterSpacing:'0.07em' }}>{card.label}</span>
+            {!card.noArrow && card.onClick && <span style={{ fontSize:11, color:DB.muted }}>›</span>}
+          </div>
+          {card.content}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Right Panel ───────────────────────────────────────────────────────────────
+function DashRightPanel({ alerts, fuelDocks, hazards, marinas, onOpenChat }) {
+  const Section = ({ title, badge, children }) => (
+    <div style={{ background:DB.card, border:`1px solid ${DB.border}`, borderRadius:12, marginBottom:8, overflow:'hidden', boxShadow:'0 1px 3px rgba(0,0,0,0.05)' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'9px 12px 8px', borderBottom:`1px solid ${DB.border}` }}>
+        <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+          <span style={{ fontSize:11.5, fontWeight:700, color:DB.blue, letterSpacing:'0.04em' }}>{title}</span>
+          {badge > 0 && <span style={{ background:DB.red, color:'white', borderRadius:99, fontSize:9.5, fontWeight:700, padding:'1px 6px', lineHeight:'15px' }}>{badge}</span>}
+        </div>
+        <button style={{ all:'unset', cursor:'pointer', fontSize:11, color:DB.blue, fontWeight:600 }}>View all</button>
+      </div>
+      <div>{children}</div>
+    </div>
+  );
+  const Row = ({ emoji, label, sub, right, tint }) => (
+    <div style={{ display:'flex', alignItems:'center', gap:9, padding:'7px 12px' }}>
+      <div style={{ width:28, height:28, borderRadius:8, background: tint||'#F1F5F9', display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, flexShrink:0 }}>{emoji}</div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:12.5, fontWeight:600, color:DB.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{label}</div>
+        {sub && <div style={{ fontSize:11, color:DB.muted, marginTop:1 }}>{sub}</div>}
+      </div>
+      {right && <div style={{ fontSize:11.5, color:DB.muted, flexShrink:0, fontWeight:500 }}>{right}</div>}
+    </div>
+  );
+  const Empty = ({ msg }) => <div style={{ padding:'9px 12px', fontSize:12, color:DB.muted }}>{msg}</div>;
+  return (
+    <div style={{ width:282, minWidth:282, height:'100%', overflowY:'auto', background:DB.bg, padding:'8px 8px 8px 0', flexShrink:0, boxSizing:'border-box' }}>
+      <Section title="ALERTS" badge={alerts.length}>
+        {alerts.length === 0
+          ? <Empty msg="No active alerts"/>
+          : alerts.slice(0,4).map((a,i) => (
+            <Row key={i}
+              emoji={a.type==='danger'?'🚨':a.type==='warning'?'⚠️':'ℹ️'}
+              tint={a.type==='danger'?'#FEE2E2':a.type==='warning'?'#FEF9C3':'#EFF6FF'}
+              label={a.text.length>46 ? a.text.slice(0,46)+'…' : a.text}
+            />
+          ))
+        }
+      </Section>
+      <Section title="FUEL DOCKS NEARBY">
+        {fuelDocks.length === 0
+          ? <Empty msg="No fuel docks found nearby"/>
+          : fuelDocks.map((d,i) => <Row key={i} emoji="⛽" tint="#F0FDF4" label={d.name} sub={`${d.dist} mi away`} right={d.price ? `${d.price}/gal` : null}/>)
+        }
+      </Section>
+      <Section title="HAZARDS NEARBY">
+        {hazards.length === 0
+          ? <Empty msg="No hazards along route"/>
+          : hazards.slice(0,4).map((h,i) => {
+            const ico = h.type==='rock'||h.type==='reef'?'🪨':h.type==='wreck'?'🚢':h.type==='shoal'?'🏖️':'⚠️';
+            return <Row key={i} emoji={ico} tint="#FFFBEB" label={h.name||h.type||'Hazard'} sub={h.type}/>;
+          })
+        }
+      </Section>
+      <Section title="MARINAS & RAMPS NEARBY">
+        {marinas.length === 0
+          ? <Empty msg="No marinas found nearby"/>
+          : marinas.map((m,i) => <Row key={i} emoji="⚓" tint="#EFF6FF" label={m.name} right={`${m.dist} mi`}/>)
+        }
+      </Section>
+      <Section title="BOATER CHAT">
+        <div style={{ padding:'8px 12px' }}>
+          <div style={{ fontSize:12, color:DB.muted, marginBottom:8 }}>Connect with nearby boaters in real time</div>
+          <button onClick={onOpenChat} style={{ all:'unset', cursor:'pointer', display:'block', width:'100%', boxSizing:'border-box', padding:'8px 0', borderRadius:8, textAlign:'center', background:DB.blue, color:'white', fontSize:13, fontWeight:600 }}>Open Chat</button>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+// ── Trip Bar ─────────────────────────────────────────────────────────────────
+function DashTripBar({ route, currentTrip, fuelLevel, fuelPct, fuelCap, fuelRangeMi, routeDistMi, onPlan }) {
+  const from = currentTrip?.from || route?.from || '—';
+  const to   = currentTrip?.to   || route?.to   || '—';
+  const speed = 20;
+  const etaMins = routeDistMi > 0 ? Math.round((routeDistMi / speed) * 60) : null;
+  const etaStr  = etaMins ? (etaMins >= 60 ? `${Math.floor(etaMins/60)}h ${etaMins%60}m` : `${etaMins}m`) : null;
+  const fuelUsed = Math.max(0, fuelCap - fuelLevel);
+  const gaugeColor = fuelPct > 30 ? DB.green : fuelPct > 15 ? DB.amber : DB.red;
+  const arcLen = Math.PI * 22;
+
+  return (
+    <div style={{ background:DB.card, borderTop:`1px solid ${DB.border}`, display:'flex', alignItems:'stretch', flexShrink:0, boxShadow:'0 -2px 8px rgba(0,0,0,0.04)', minHeight:100 }}>
+      {/* Current Trip */}
+      <div style={{ flex:1.3, padding:'10px 14px', borderRight:`1px solid ${DB.border}` }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:7 }}>
+          <span style={{ fontSize:10, fontWeight:700, color:DB.blue, letterSpacing:'0.06em' }}>CURRENT TRIP</span>
+          <button onClick={onPlan} style={{ all:'unset', cursor:'pointer', fontSize:10.5, color:DB.blue, fontWeight:600 }}>✏ Edit</button>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:9.5, color:DB.muted, fontWeight:600, marginBottom:1 }}>From</div>
+            <div style={{ fontSize:12.5, fontWeight:600, color:DB.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{from}</div>
+          </div>
+          <span style={{ color:DB.muted, fontSize:15, flexShrink:0 }}>→</span>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:9.5, color:DB.muted, fontWeight:600, marginBottom:1 }}>To</div>
+            <div style={{ fontSize:12.5, fontWeight:600, color:DB.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{to}</div>
+          </div>
+        </div>
+        {routeDistMi > 0 && (
+          <div style={{ display:'flex', gap:12, marginTop:7 }}>
+            {etaStr && <span style={{ fontSize:11.5, color:DB.muted }}><b style={{ color:DB.text }}>ETA</b> {etaStr}</span>}
+            <span style={{ fontSize:11.5, color:DB.muted }}><b style={{ color:DB.text }}>{routeDistMi}</b> mi</span>
+          </div>
+        )}
+      </div>
+      {/* Trip Progress */}
+      <div style={{ flex:1.3, padding:'10px 16px', borderRight:`1px solid ${DB.border}` }}>
+        <div style={{ fontSize:10, fontWeight:700, color:DB.blue, letterSpacing:'0.06em', marginBottom:10 }}>TRIP PROGRESS</div>
+        <div style={{ display:'flex', alignItems:'center' }}>
+          {[{ label: from, icon:'anchor' }, { label:'En Route', icon:'boat' }, { label: to, icon:'pin' }].map((node, i, arr) => (
+            <React.Fragment key={i}>
+              <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:4, flexShrink:0 }}>
+                <div style={{ width:26, height:26, borderRadius:'50%', background: i===0||i===arr.length-1 ? DB.blue : '#E2E8F0', border:`2px solid ${i===0||i===arr.length-1 ? DB.blue : '#CBD5E1'}`, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  <Icon name={node.icon} size={12} color={i===0||i===arr.length-1?'white':DB.muted} sw={2}/>
+                </div>
+                <div style={{ fontSize:9, color:DB.muted, maxWidth:56, textAlign:'center', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{node.label}</div>
+              </div>
+              {i < arr.length-1 && <div style={{ flex:1, height:2, background: i===0 ? `linear-gradient(90deg,${DB.blue},#CBD5E1)` : '#E2E8F0', margin:'0 3px', marginBottom:14 }}/>}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+      {/* My Fuel */}
+      <div style={{ flex:1, padding:'10px 14px', borderRight:`1px solid ${DB.border}` }}>
+        <div style={{ fontSize:10, fontWeight:700, color:DB.blue, letterSpacing:'0.06em', marginBottom:6 }}>MY FUEL</div>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <svg width={58} height={32} viewBox="0 0 58 32" style={{ flexShrink:0 }}>
+            <path d="M 5 30 A 24 24 0 0 1 53 30" fill="none" stroke="#E2E8F0" strokeWidth={5.5} strokeLinecap="round"/>
+            <path d="M 5 30 A 24 24 0 0 1 53 30" fill="none" stroke={gaugeColor}
+              strokeWidth={5.5} strokeLinecap="round"
+              strokeDasharray={`${arcLen * (fuelPct/100)} ${arcLen}`}/>
+            <text x="29" y="28" textAnchor="middle" fontSize="9" fontWeight="700" fill={DB.text}>{fuelPct}%</text>
+          </svg>
+          <div style={{ fontSize:11 }}>
+            <div style={{ color:DB.muted }}>Tank <span style={{ fontWeight:700, color:DB.text }}>{fuelCap}gal</span></div>
+            <div style={{ color:DB.muted }}>Used <span style={{ fontWeight:700, color:DB.text }}>{fuelUsed.toFixed(1)}gal</span></div>
+            <div style={{ color:DB.muted }}>Range <span style={{ fontWeight:700, color:DB.text }}>{fuelRangeMi}mi</span></div>
+          </div>
+        </div>
+      </div>
+      {/* Quick Actions */}
+      <div style={{ flex:0.85, padding:'10px 12px' }}>
+        <div style={{ fontSize:10, fontWeight:700, color:DB.blue, letterSpacing:'0.06em', marginBottom:8 }}>QUICK ACTIONS</div>
+        <div style={{ display:'flex', gap:5 }}>
+          {[
+            { emoji:'🗺️', label:'Plan Trip',        onClick: onPlan },
+            { emoji:'⏺️', label:'Record Trip',      onClick: ()=>{} },
+            { emoji:'📍', label:'Share\nLocation',  onClick: ()=>{} },
+          ].map((a,i) => (
+            <button key={i} onClick={a.onClick} style={{ all:'unset', cursor:'pointer', flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:3, padding:'6px 3px', borderRadius:8, background:'#F8FAFC', border:`1px solid ${DB.border}`, transition:'background 0.1s', textAlign:'center' }}
+              onMouseEnter={e => e.currentTarget.style.background='#EFF6FF'}
+              onMouseLeave={e => e.currentTarget.style.background='#F8FAFC'}
+            >
+              <span style={{ fontSize:18 }}>{a.emoji}</span>
+              <span style={{ fontSize:9, color:DB.muted, fontWeight:600, lineHeight:1.3, whiteSpace:'pre-line' }}>{a.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Bottom Tab Bar ───────────────────────────────────────────────────────────
+function DashBottomTab({ activeView, onNavigate, chatUnread, alertCount, accent }) {
+  const TABS = [
+    { id:'home',    label:'Home',          icon:'home'     },
+    { id:'alerts',  label:'Alerts',        icon:'anchor',  badge: alertCount },
+    { id:'hazards-report', label:'Report Hazard', center:true },
+    { id:'trips',   label:'Trips',         icon:'bookmark' },
+    { id:'boats',   label:'More',          icon:'settings' },
+  ];
+  return (
+    <div style={{ background:DB.card, borderTop:`1px solid ${DB.border}`, display:'flex', alignItems:'center', flexShrink:0, height:52 }}>
+      {TABS.map(tab => {
+        const on = activeView === tab.id;
+        if (tab.center) return (
+          <button key={tab.id} onClick={() => onNavigate(tab.id)} style={{ all:'unset', cursor:'pointer', flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:2 }}>
+            <div style={{ width:38, height:38, borderRadius:'50%', background:DB.blue, display:'flex', alignItems:'center', justifyContent:'center', boxShadow:`0 2px 10px ${DB.blue}55`, marginTop:-10 }}>
+              <Icon name="plus" size={18} color="white" sw={2.5}/>
+            </div>
+            <span style={{ fontSize:9, fontWeight:600, color:DB.blue }}>{tab.label}</span>
+          </button>
+        );
+        return (
+          <button key={tab.id} onClick={() => onNavigate(tab.id)} style={{
+            all:'unset', cursor:'pointer', flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:2, height:'100%',
+            color: on ? DB.blue : DB.muted,
+            borderTop:`2px solid ${on ? DB.blue : 'transparent'}`,
+          }}>
+            <div style={{ position:'relative' }}>
+              <Icon name={tab.icon} size={17} color={on?DB.blue:DB.muted} sw={on?2.2:1.8}/>
+              {tab.badge > 0 && <span style={{ position:'absolute', top:-4, right:-6, minWidth:13, height:13, borderRadius:99, background:'#EF4444', color:'white', fontSize:8.5, fontWeight:800, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 2px' }}>{tab.badge}</span>}
+            </div>
+            <span style={{ fontSize:9.5, fontWeight: on ? 700 : 500 }}>{tab.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Vessels View ──────────────────────────────────────────────────────────────
+function VesselsView({ vessels, userPos, aisConnected, accent }) {
+  const [filter, setFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('dist');
+
+  const withDist = vessels.map(v => ({
+    ...v,
+    distNm: userPos ? _haversineNm(userPos.lat, userPos.lng, v.lat, v.lng) : null,
+    cpa: userPos ? _computeCPA(userPos.lat, userPos.lng, 0, 0, v.lat, v.lng, v.sog||0, v.cog||0) : null,
+  }));
+
+  const TYPE_FILTERS = [
+    { id:'all',       label:'All' },
+    { id:'cargo',     label:'🚢 Cargo',     test: v => v.shipType >= 70 && v.shipType <= 79 },
+    { id:'tanker',    label:'🛢 Tanker',    test: v => v.shipType >= 80 && v.shipType <= 89 },
+    { id:'passenger', label:'🛳 Passenger', test: v => v.shipType >= 60 && v.shipType <= 69 },
+    { id:'fishing',   label:'🎣 Fishing',   test: v => v.shipType === 30 },
+    { id:'pleasure',  label:'⛵ Pleasure',  test: v => v.shipType === 36 || v.shipType === 37 },
+  ];
+
+  const filterFn = TYPE_FILTERS.find(f => f.id === filter);
+  const filtered = filter === 'all' ? withDist : withDist.filter(filterFn?.test || (()=>true));
+  const sorted   = [...filtered].sort((a,b) => {
+    if (sortBy === 'dist') return (a.distNm??999) - (b.distNm??999);
+    if (sortBy === 'speed') return (b.sog||0) - (a.sog||0);
+    if (sortBy === 'cpa') return (a.cpa?.dNm??999) - (b.cpa?.dNm??999);
+    return 0;
+  });
+
+  const cpaAlerts = withDist.filter(v => v.cpa && v.cpa.dNm < 0.5 && v.cpa.tMin > 0 && v.cpa.tMin < 20);
+
+  const compassDir = deg => {
+    if (deg == null) return '—';
+    const dirs = ['N','NE','E','SE','S','SW','W','NW'];
+    return dirs[Math.round(deg/45)%8];
+  };
+
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', overflow:'hidden', background:DB.bg }}>
+      {/* Header */}
+      <div style={{ padding:'14px 16px 10px', background:DB.card, borderBottom:`1px solid ${DB.border}`, flexShrink:0 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10 }}>
+          <div>
+            <h2 style={{ margin:0, fontSize:20, fontWeight:800, color:DB.text }}>Live Vessels</h2>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:3 }}>
+              <div style={{ width:7, height:7, borderRadius:'50%', background: aisConnected ? DB.green : DB.muted, boxShadow: aisConnected ? `0 0 6px ${DB.green}` : 'none' }}/>
+              <span style={{ fontSize:13, color:DB.muted }}>{aisConnected ? `${vessels.length} vessels in range` : 'AIS disconnected'}</span>
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:6 }}>
+            {['dist','speed','cpa'].map(s => (
+              <button key={s} onClick={()=>setSortBy(s)} style={{ all:'unset', cursor:'pointer', padding:'4px 10px', borderRadius:99, fontSize:11.5, fontWeight:600, border:`1.5px solid ${sortBy===s?DB.blue:DB.border}`, background:sortBy===s?DB.blueSoft:'white', color:sortBy===s?DB.blue:DB.muted }}>
+                {s==='dist'?'Distance':s==='speed'?'Speed':'CPA'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Type filter chips */}
+        <div style={{ display:'flex', gap:6, overflowX:'auto', paddingBottom:2 }}>
+          {TYPE_FILTERS.map(f => (
+            <button key={f.id} onClick={()=>setFilter(f.id)} style={{ all:'unset', cursor:'pointer', flexShrink:0, padding:'4px 12px', borderRadius:99, fontSize:12, fontWeight:600, border:`1.5px solid ${filter===f.id?DB.blue:DB.border}`, background:filter===f.id?DB.blueSoft:'white', color:filter===f.id?DB.blue:DB.muted }}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ flex:1, overflowY:'auto', padding:12 }}>
+        {/* CPA alerts banner */}
+        {cpaAlerts.length > 0 && (
+          <div style={{ background:DB.redSoft, border:`1.5px solid ${DB.red}44`, borderLeft:`4px solid ${DB.red}`, borderRadius:10, padding:'10px 14px', marginBottom:12 }}>
+            <div style={{ fontSize:13, fontWeight:800, color:DB.red, marginBottom:4 }}>⚠ Collision Risk — {cpaAlerts.length} vessel{cpaAlerts.length>1?'s':''}</div>
+            {cpaAlerts.map(v => (
+              <div key={v.mmsi} style={{ fontSize:12.5, color:DB.text, marginTop:3 }}>
+                <b>{v.name}</b> — CPA {v.cpa.dNm.toFixed(2)} nm in {Math.round(v.cpa.tMin)} min
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!aisConnected && vessels.length === 0 && (
+          <div style={{ textAlign:'center', padding:'40px 0', color:DB.muted }}>
+            <div style={{ fontSize:36, marginBottom:12 }}>📡</div>
+            <div style={{ fontSize:15, fontWeight:700, color:DB.text, marginBottom:6 }}>AIS Not Connected</div>
+            <div style={{ fontSize:13 }}>Set a location or enable GPS to stream live vessel data.</div>
+          </div>
+        )}
+
+        {sorted.map(v => {
+          const warn = v.cpa && v.cpa.dNm < 0.5 && v.cpa.tMin > 0 && v.cpa.tMin < 20;
+          const caution = v.cpa && v.cpa.dNm < 1.0 && v.cpa.tMin > 0 && v.cpa.tMin < 30 && !warn;
+          return (
+            <div key={v.mmsi} style={{ background: warn ? DB.redSoft : 'white', border:`1.5px solid ${warn?DB.red:caution?DB.amber:DB.border}`, borderRadius:13, padding:'10px 14px', marginBottom:8, boxShadow:'0 1px 3px rgba(0,0,0,0.05)' }}>
+              <div style={{ display:'flex', alignItems:'flex-start', gap:11 }}>
+                {/* Vessel icon */}
+                <div style={{ width:36, height:36, borderRadius:10, background:`${_vesselColor(v.shipType)}22`, border:`1.5px solid ${_vesselColor(v.shipType)}55`, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+                  <svg width="12" height="16" viewBox="0 0 14 18" style={{ transform:`rotate(${v.cog||0}deg)` }}>
+                    <polygon points="7,0 14,18 7,13 0,18" fill={_vesselColor(v.shipType)}/>
+                  </svg>
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:'flex', alignItems:'baseline', gap:8, marginBottom:3 }}>
+                    <span style={{ fontSize:14, fontWeight:700, color:DB.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{v.name}</span>
+                    {warn && <span style={{ fontSize:11, fontWeight:800, color:DB.red, flexShrink:0 }}>⚠ CPA ALERT</span>}
+                    {caution && <span style={{ fontSize:11, fontWeight:700, color:DB.amber, flexShrink:0 }}>⚠ Caution</span>}
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(90px,1fr))', gap:'2px 12px', fontSize:12, color:DB.muted }}>
+                    {v.shipType > 0 && <span style={{ color:DB.blue, fontWeight:600 }}>{_vesselTypeName(v.shipType)}</span>}
+                    {v.distNm != null && <span>📍 {v.distNm < 1 ? (v.distNm*10).toFixed(0)*100+'yd' : v.distNm.toFixed(2)+' nm'} away</span>}
+                    {v.sog != null && <span>⚡ {v.sog.toFixed(1)} kt</span>}
+                    {v.cog != null && <span>🧭 {Math.round(v.cog)}° {compassDir(v.cog)}</span>}
+                    {v.cpa && v.cpa.tMin < 60 && <span style={{ color: warn?DB.red:caution?DB.amber:DB.muted, fontWeight: (warn||caution)?700:400 }}>CPA {v.cpa.dNm.toFixed(2)} nm / {Math.round(v.cpa.tMin)} min</span>}
+                    {v.destination && <span>🏁 {v.destination}</span>}
+                    {v.dimLength > 0 && <span>📏 {v.dimLength}m</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const FUEL_KEY = id => `safeseas_fuel_${id}`;
+
+// ── Fill-Up Modal ─────────────────────────────────────────────────────────────
+function FillUpModal({ boat, lat, lon, locationName, authToken, onClose, onSubmitted }) {
+  const cap = boat?.fuelCapacity || boat?.tank || 0;
+  const cur = boat?.id ? parseFloat(localStorage.getItem(FUEL_KEY(boat.id)) || '0') : 0;
+
+  const [gallons, setGallons]     = useState('');
+  const [price, setPrice]         = useState('');
+  const [note, setNote]           = useState('');
+  const [full, setFull]           = useState(false);
+  const [submitting, setSub]      = useState(false);
+  const [error, setError]         = useState('');
+
+  const gal = parseFloat(gallons) || 0;
+  const newLevel = Math.min(cap || 9999, cur + gal);
+  const totalCost = gal && price ? (gal * parseFloat(price)).toFixed(2) : null;
+
+  const submit = async () => {
+    if (!gal || gal <= 0) { setError('Enter gallons added'); return; }
+    setSub(true); setError('');
+    try {
+      const r = await fetch(`${API}/api/fuel`, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', 'Authorization':`Bearer ${authToken}` },
+        body: JSON.stringify({
+          boatId: boat?.id, gallons: gal, pricePerGal: price || null,
+          locationName: locationName || null, lat, lon, note, fillToFull: full,
+        }),
+      });
+      if (!r.ok) { const e = await r.json(); setError(e.error || 'Failed'); setSub(false); return; }
+      // Update localStorage tank level
+      if (boat?.id) {
+        const level = full && cap ? cap : newLevel;
+        localStorage.setItem(FUEL_KEY(boat.id), String(level));
+      }
+      onSubmitted?.();
+      onClose();
+    } catch { setError('Network error'); setSub(false); }
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.55)', zIndex:2000, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={e => e.target===e.currentTarget && onClose()}>
+      <div style={{ background:'white', borderRadius:18, padding:24, width:420, maxWidth:'100%', boxShadow:'0 20px 60px rgba(0,0,0,0.3)' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:18 }}>
+          <div>
+            <h3 style={{ margin:0, fontSize:17, fontWeight:800, color:DB.text }}>Log Fill-Up</h3>
+            <div style={{ fontSize:12, color:DB.muted, marginTop:2 }}>{boat?.name || 'Current boat'}</div>
+          </div>
+          <button onClick={onClose} style={{ all:'unset', cursor:'pointer', fontSize:22, color:DB.muted }}>✕</button>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:14 }}>
+          <div>
+            <label style={{ fontSize:11, fontWeight:700, color:DB.blue, letterSpacing:'0.06em', display:'block', marginBottom:5 }}>GALLONS ADDED *</label>
+            <input type="number" min="0" step="0.1" value={gallons} onChange={e=>setGallons(e.target.value)}
+              placeholder="e.g. 24.5"
+              style={{ width:'100%', boxSizing:'border-box', padding:'9px 12px', border:`1.5px solid ${DB.border}`, borderRadius:9, fontSize:14, fontFamily:'inherit', outline:'none' }}
+              onFocus={e=>e.target.style.borderColor=DB.blue} onBlur={e=>e.target.style.borderColor=DB.border}/>
+          </div>
+          <div>
+            <label style={{ fontSize:11, fontWeight:700, color:DB.blue, letterSpacing:'0.06em', display:'block', marginBottom:5 }}>PRICE / GAL <span style={{ color:DB.muted, fontWeight:400 }}>(optional)</span></label>
+            <input type="number" min="0" step="0.01" value={price} onChange={e=>setPrice(e.target.value)}
+              placeholder="e.g. 4.89"
+              style={{ width:'100%', boxSizing:'border-box', padding:'9px 12px', border:`1.5px solid ${DB.border}`, borderRadius:9, fontSize:14, fontFamily:'inherit', outline:'none' }}
+              onFocus={e=>e.target.style.borderColor=DB.blue} onBlur={e=>e.target.style.borderColor=DB.border}/>
+          </div>
+        </div>
+
+        {cap > 0 && gal > 0 && (
+          <div style={{ background:DB.greenSoft, border:`1px solid ${DB.green}33`, borderRadius:10, padding:'9px 12px', marginBottom:14 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+              <span style={{ fontSize:12, color:DB.muted }}>New tank level</span>
+              <span style={{ fontSize:13, fontWeight:700, color:DB.green }}>{Math.min(newLevel, cap).toFixed(1)} / {cap} gal</span>
+            </div>
+            <div style={{ height:5, borderRadius:99, background:'#D1FAE5', overflow:'hidden' }}>
+              <div style={{ height:'100%', width:`${Math.min(100,(newLevel/cap)*100)}%`, background:DB.green, borderRadius:99 }}/>
+            </div>
+            {totalCost && <div style={{ fontSize:12, color:DB.muted, marginTop:6 }}>Total cost: <b style={{ color:DB.text }}>${totalCost}</b></div>}
+          </div>
+        )}
+
+        <label style={{ display:'flex', alignItems:'center', gap:9, marginBottom:14, cursor:'pointer', fontSize:13.5, color:DB.text, fontWeight:500 }}>
+          <input type="checkbox" checked={full} onChange={e=>setFull(e.target.checked)} style={{ width:16, height:16, accentColor:DB.green }}/>
+          Filled tank to full
+        </label>
+
+        <div>
+          <label style={{ fontSize:11, fontWeight:700, color:DB.blue, letterSpacing:'0.06em', display:'block', marginBottom:5 }}>NOTE <span style={{ color:DB.muted, fontWeight:400 }}>(optional)</span></label>
+          <input value={note} onChange={e=>setNote(e.target.value)} placeholder="Marina name, dock, etc."
+            style={{ width:'100%', boxSizing:'border-box', padding:'9px 12px', border:`1.5px solid ${DB.border}`, borderRadius:9, fontSize:13, fontFamily:'inherit', outline:'none', marginBottom:14 }}
+            onFocus={e=>e.target.style.borderColor=DB.blue} onBlur={e=>e.target.style.borderColor=DB.border}/>
+        </div>
+
+        {locationName && (
+          <div style={{ fontSize:12, color:DB.muted, marginBottom:12 }}>📍 {locationName}</div>
+        )}
+
+        {error && <div style={{ background:DB.redSoft, border:`1px solid ${DB.red}33`, borderRadius:8, padding:'8px 12px', fontSize:13, color:DB.red, marginBottom:12 }}>{error}</div>}
+
+        <div style={{ display:'flex', gap:10 }}>
+          <button onClick={onClose} style={{ all:'unset', cursor:'pointer', flex:1, padding:'11px 0', textAlign:'center', borderRadius:10, border:`1.5px solid ${DB.border}`, fontSize:13.5, fontWeight:600, color:DB.muted }}>Cancel</button>
+          <button onClick={submit} disabled={submitting} style={{ all:'unset', cursor:submitting?'not-allowed':'pointer', flex:2, padding:'11px 0', textAlign:'center', borderRadius:10, background:submitting?'#94A3B8':DB.green, color:'white', fontSize:13.5, fontWeight:700 }}>
+            {submitting ? 'Saving…' : '⛽ Log Fill-Up'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Fuel View ─────────────────────────────────────────────────────────────────
+function FuelView({ boat, authToken, route, appUserPos }) {
+  const cap      = boat?.fuelCapacity || boat?.tank || 0;
+  const fuelKey  = boat?.id ? FUEL_KEY(boat.id) : null;
+  const [level, setLevelState] = useState(() => fuelKey ? parseFloat(localStorage.getItem(fuelKey) || '0') : 0);
+  const [log, setLog]           = useState([]);
+  const [showFillUp, setFillUp] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+
+  const setLevel = v => {
+    const clamped = Math.max(0, Math.min(cap || 9999, v));
+    setLevelState(clamped);
+    if (fuelKey) localStorage.setItem(fuelKey, String(clamped));
+  };
+
+  const fetchLog = () => {
+    if (!authToken) return;
+    const q = boat?.id ? `?boatId=${boat.id}` : '';
+    fetch(`${API}/api/fuel${q}`, { headers:{ 'Authorization':`Bearer ${authToken}` }})
+      .then(r => r.ok ? r.json() : []).then(setLog).catch(()=>{});
+  };
+  useEffect(fetchLog, [boat?.id, authToken]);
+
+  const deleteEntry = async id => {
+    setDeleting(id);
+    await fetch(`${API}/api/fuel/${id}`, { method:'DELETE', headers:{ 'Authorization':`Bearer ${authToken}` }}).catch(()=>{});
+    setLog(prev => prev.filter(e => e.id !== id));
+    setDeleting(null);
+  };
+
+  const pct    = cap > 0 ? Math.min(100, Math.round((level/cap)*100)) : 0;
+  const color  = pct > 30 ? DB.green : pct > 15 ? DB.amber : DB.red;
+  const rangeNm  = (boat?.fuelBurn>0 && boat?.cruiseSpeed>0 && level>0) ? (level/boat.fuelBurn)*boat.cruiseSpeed : 0;
+  const rangeMi  = Math.round(rangeNm * 1.151);
+  const routeDistNm = route?.waypoints ? _routeDistNm(route.waypoints) : 0;
+  const routeDistMi = Math.round(routeDistNm * 1.151);
+  const routeOk  = !routeDistNm || rangeNm >= routeDistNm;
+
+  const totalGal  = log.reduce((s,e)=>s+e.gallons,0);
+  const totalCost = log.filter(e=>e.totalCost).reduce((s,e)=>s+(e.totalCost||0),0);
+  const avgPrice  = log.filter(e=>e.pricePerGal).length
+    ? (log.filter(e=>e.pricePerGal).reduce((s,e)=>s+e.pricePerGal,0)/log.filter(e=>e.pricePerGal).length).toFixed(2)
+    : null;
+
+  const arcR = 52, arcLen = Math.PI * arcR;
+
+  return (
+    <div style={{ height:'100%', overflowY:'auto', background:DB.bg, padding:16 }}>
+      <div style={{ maxWidth:800, margin:'0 auto' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+          <div>
+            <h2 style={{ margin:0, fontSize:20, fontWeight:800, color:DB.text }}>Fuel</h2>
+            <div style={{ fontSize:13, color:DB.muted, marginTop:3 }}>{boat?.name || 'Select a boat to track fuel'}</div>
+          </div>
+          {boat && (
+            <button onClick={()=>setFillUp(true)} style={{ all:'unset', cursor:'pointer', display:'flex', alignItems:'center', gap:7, padding:'9px 16px', background:DB.green, color:'white', borderRadius:10, fontSize:13, fontWeight:700, boxShadow:`0 2px 8px ${DB.green}55` }}>
+              <span>⛽</span> Log Fill-Up
+            </button>
+          )}
+        </div>
+
+        {/* Tank gauge + level control */}
+        {boat && (
+          <div style={{ background:DB.card, border:`1px solid ${DB.border}`, borderRadius:14, padding:'20px 24px', marginBottom:12, boxShadow:'0 1px 4px rgba(0,0,0,0.05)' }}>
+            <div style={{ display:'flex', alignItems:'center', gap:24 }}>
+              {/* Arc gauge */}
+              <svg width={130} height={76} viewBox="0 0 130 76" style={{ flexShrink:0 }}>
+                <path d={`M 10 74 A ${arcR} ${arcR} 0 0 1 120 74`} fill="none" stroke="#E2E8F0" strokeWidth={10} strokeLinecap="round"/>
+                <path d={`M 10 74 A ${arcR} ${arcR} 0 0 1 120 74`} fill="none" stroke={color}
+                  strokeWidth={10} strokeLinecap="round"
+                  strokeDasharray={`${arcLen * pct/100} ${arcLen}`}/>
+                <text x="65" y="62" textAnchor="middle" fontSize="18" fontWeight="800" fill={DB.text}>{pct}%</text>
+                <text x="65" y="76" textAnchor="middle" fontSize="10" fill={DB.muted}>{level.toFixed(1)} gal</text>
+              </svg>
+              {/* Stats + slider */}
+              <div style={{ flex:1 }}>
+                <div style={{ display:'flex', gap:16, marginBottom:12 }}>
+                  <div>
+                    <div style={{ fontSize:11, color:DB.muted, fontWeight:600 }}>TANK SIZE</div>
+                    <div style={{ fontSize:16, fontWeight:700, color:DB.text }}>{cap > 0 ? `${cap} gal` : '—'}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize:11, color:DB.muted, fontWeight:600 }}>EST. RANGE</div>
+                    <div style={{ fontSize:16, fontWeight:700, color: routeOk?DB.green:DB.red }}>{rangeMi > 0 ? `${rangeMi} mi` : '—'}</div>
+                  </div>
+                  {routeDistMi > 0 && (
+                    <div>
+                      <div style={{ fontSize:11, color:DB.muted, fontWeight:600 }}>ROUTE DIST</div>
+                      <div style={{ fontSize:16, fontWeight:700, color:DB.text }}>{routeDistMi} mi</div>
+                    </div>
+                  )}
+                </div>
+                {!routeOk && <div style={{ fontSize:12, color:DB.red, fontWeight:600, background:DB.redSoft, borderRadius:7, padding:'5px 10px', marginBottom:10 }}>⚠ Fuel may not cover this route — plan a refuel stop</div>}
+                {cap > 0 && (
+                  <>
+                    <label style={{ fontSize:11, fontWeight:700, color:DB.muted, letterSpacing:'0.06em' }}>CURRENT LEVEL</label>
+                    <input type="range" min={0} max={cap} step={0.5} value={level} onChange={e=>setLevel(parseFloat(e.target.value))}
+                      style={{ width:'100%', accentColor:color, marginTop:4 }}/>
+                    <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, color:DB.muted }}>
+                      <span>0</span><span>{cap} gal</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Stats strip */}
+        {log.length > 0 && (
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:12 }}>
+            {[
+              { label:'Total Logged', value:`${totalGal.toFixed(1)} gal` },
+              { label:'Total Spent',  value: totalCost > 0 ? `$${totalCost.toFixed(2)}` : '—' },
+              { label:'Avg Price',    value: avgPrice ? `$${avgPrice}/gal` : '—' },
+            ].map(s => (
+              <div key={s.label} style={{ background:DB.card, border:`1px solid ${DB.border}`, borderRadius:12, padding:'10px 14px', textAlign:'center', boxShadow:'0 1px 3px rgba(0,0,0,0.04)' }}>
+                <div style={{ fontSize:15, fontWeight:800, color:DB.text }}>{s.value}</div>
+                <div style={{ fontSize:10.5, color:DB.muted, fontWeight:600, marginTop:3 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Fill-up log */}
+        <div style={{ background:DB.card, border:`1px solid ${DB.border}`, borderRadius:14, overflow:'hidden', boxShadow:'0 1px 4px rgba(0,0,0,0.05)' }}>
+          <div style={{ padding:'11px 16px', borderBottom:`1px solid ${DB.border}`, fontSize:10.5, fontWeight:800, color:DB.blue, letterSpacing:'0.07em' }}>FILL-UP LOG</div>
+          {log.length === 0 ? (
+            <div style={{ padding:'30px 16px', textAlign:'center', color:DB.muted }}>
+              <div style={{ fontSize:28, marginBottom:8 }}>⛽</div>
+              <div style={{ fontSize:14, fontWeight:600, color:DB.text, marginBottom:4 }}>No fill-ups logged yet</div>
+              <div style={{ fontSize:13 }}>Tap "Log Fill-Up" to start tracking your fuel.</div>
+            </div>
+          ) : log.map(e => (
+            <div key={e.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 16px', borderBottom:`1px solid ${DB.border}` }}>
+              <div style={{ width:38, height:38, borderRadius:10, background:DB.greenSoft, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, flexShrink:0 }}>⛽</div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ display:'flex', alignItems:'baseline', gap:10, flexWrap:'wrap' }}>
+                  <span style={{ fontSize:14, fontWeight:700, color:DB.text }}>{e.gallons.toFixed(1)} gal</span>
+                  {e.totalCost && <span style={{ fontSize:13, color:DB.green, fontWeight:600 }}>${e.totalCost.toFixed(2)}</span>}
+                  {e.pricePerGal && <span style={{ fontSize:12, color:DB.muted }}>${e.pricePerGal.toFixed(2)}/gal</span>}
+                  {e.fillToFull && <span style={{ fontSize:11, color:DB.blue, background:DB.blueSoft, borderRadius:99, padding:'1px 7px', fontWeight:700 }}>Full</span>}
+                </div>
+                <div style={{ fontSize:12, color:DB.muted, marginTop:2 }}>
+                  {new Date(e.date).toLocaleDateString()} {new Date(e.date).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}
+                  {e.locationName && ` · ${e.locationName}`}
+                  {e.note && ` · ${e.note}`}
+                </div>
+              </div>
+              <button onClick={()=>deleteEntry(e.id)} disabled={deleting===e.id} style={{ all:'unset', cursor:'pointer', color:'#CBD5E1', fontSize:16, padding:'4px 8px' }}
+                onMouseEnter={el=>el.target.style.color=DB.red} onMouseLeave={el=>el.target.style.color='#CBD5E1'}>
+                {deleting===e.id?'…':'✕'}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {showFillUp && (
+        <FillUpModal boat={boat} lat={appUserPos?.lat} lon={appUserPos?.lng}
+          locationName={null} authToken={authToken}
+          onClose={()=>setFillUp(false)} onSubmitted={()=>{ fetchLog(); setFillUp(false); }}/>
+      )}
+    </div>
+  );
+}
+
+// ── Marina View ───────────────────────────────────────────────────────────────
+async function _fetchMarinasAndRamps(lat, lon) {
+  const d = 0.4;
+  const bbox = `${lat-d},${lon-d},${lat+d},${lon+d}`;
+  const q = `[out:json][timeout:18];(`+
+    `node["leisure"="marina"](${bbox});way["leisure"="marina"](${bbox});`+
+    `node["leisure"="slipway"](${bbox});way["leisure"="slipway"](${bbox});`+
+    `node["amenity"="boat_ramp"](${bbox});way["amenity"="boat_ramp"](${bbox});`+
+    `node["waterway"="fuel"](${bbox});`+
+    `node["seamark:type"="fuel_station"](${bbox});`+
+    `node["amenity"="fuel"]["boat"="yes"](${bbox});`+
+    `node["fuel:marine"="yes"](${bbox});`+
+  `);out center 40;`;
+  try {
+    const r = await fetch('https://overpass-api.de/api/interpreter', { method:'POST', body:`data=${encodeURIComponent(q)}`, headers:{'Content-Type':'application/x-www-form-urlencoded'} });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.elements||[]).map(el => {
+      const eLat = el.lat ?? el.center?.lat;
+      const eLon = el.lon ?? el.center?.lon;
+      if (!eLat) return null;
+      const t = el.tags || {};
+      let kind = 'marina';
+      if (t.leisure === 'slipway' || t.amenity === 'boat_ramp') kind = 'ramp';
+      if (t.waterway === 'fuel' || t['seamark:type'] === 'fuel_station' || t['fuel:marine'] === 'yes' || (t.amenity === 'fuel' && t.boat === 'yes')) kind = 'fuel';
+      const amenities = [
+        t.fuel === 'yes' || t.waterway === 'fuel' ? 'fuel' : null,
+        t.pump_out === 'yes' || t['seamark:small_craft_facility:category'] === 'pump_out' ? 'pump-out' : null,
+        t.sanitation_dump_station === 'yes' ? 'pump-out' : null,
+        t.wifi === 'yes' || t.internet_access === 'wlan' ? 'WiFi' : null,
+        t.laundry === 'yes' ? 'laundry' : null,
+        t.shower === 'yes' ? 'showers' : null,
+        t.boat_repair === 'yes' ? 'repairs' : null,
+        t.fee === 'yes' ? 'fee' : null,
+      ].filter(Boolean);
+      return {
+        id: el.id,
+        kind,
+        name: t.name || t.operator || (kind==='ramp'?'Boat Ramp':kind==='fuel'?'Fuel Dock':'Marina'),
+        lat: eLat, lon: eLon,
+        dist: Math.round(_haversineNm(lat,lon,eLat,eLon)*1.151*10)/10,
+        amenities,
+        fee: t.fee,
+        hours: t.opening_hours,
+        phone: t.phone || t['contact:phone'],
+        website: t.website || t['contact:website'],
+      };
+    }).filter(Boolean).sort((a,b)=>a.dist-b.dist);
+  } catch { return []; }
+}
+
+function MarinaView({ lat, lon, onPlanRoute }) {
+  const [places, setPlaces]   = useState([]);
+  const [filter, setFilter]   = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [selected, setSel]    = useState(null);
+
+  useEffect(() => {
+    if (!lat || !lon) { setLoading(false); return; }
+    setLoading(true);
+    _fetchMarinasAndRamps(lat, lon).then(data => { setPlaces(data); setLoading(false); });
+  }, [lat, lon]);
+
+  const kindLabel = { marina:'⚓ Marina', ramp:'🚤 Boat Ramp', fuel:'⛽ Fuel Dock' };
+  const kindColor = { marina:DB.blue, ramp:DB.green, fuel:DB.orange };
+
+  const filtered = filter === 'all' ? places : places.filter(p => p.kind === filter);
+
+  const AmenityChip = ({ label }) => (
+    <span style={{ fontSize:11, fontWeight:600, color:DB.blue, background:DB.blueSoft, borderRadius:99, padding:'2px 8px' }}>{label}</span>
+  );
+
+  return (
+    <div style={{ height:'100%', display:'flex', flexDirection:'column', overflow:'hidden', background:DB.bg }}>
+      {/* Header + filter */}
+      <div style={{ padding:'14px 16px 10px', background:DB.card, borderBottom:`1px solid ${DB.border}`, flexShrink:0 }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10 }}>
+          <div>
+            <h2 style={{ margin:0, fontSize:20, fontWeight:800, color:DB.text }}>Marinas & Ramps</h2>
+            <div style={{ fontSize:13, color:DB.muted, marginTop:2 }}>{filtered.length} results{lat ? ` within ~25 mi` : ''}</div>
+          </div>
+        </div>
+        <div style={{ display:'flex', gap:7 }}>
+          {['all','marina','ramp','fuel'].map(f => (
+            <button key={f} onClick={()=>{setFilter(f);setSel(null);}} style={{ all:'unset', cursor:'pointer', padding:'5px 13px', borderRadius:99, fontSize:12, fontWeight:600, border:`1.5px solid ${filter===f?kindColor[f]||DB.blue:DB.border}`, background:filter===f?`${kindColor[f]||DB.blue}12`:'white', color:filter===f?kindColor[f]||DB.blue:DB.muted, transition:'all 0.1s' }}>
+              {f==='all'?'All':kindLabel[f]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* List */}
+      <div style={{ flex:1, overflowY:'auto', padding:12 }}>
+        {loading && (
+          <div style={{ display:'flex', alignItems:'center', gap:10, padding:'24px 0', color:DB.muted }}>
+            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${DB.blue}`, borderTopColor:'transparent', animation:'spin 0.9s linear infinite' }}/>
+            Finding marinas and ramps…
+          </div>
+        )}
+        {!loading && filtered.length === 0 && (
+          <div style={{ textAlign:'center', padding:'40px 0', color:DB.muted }}>
+            <div style={{ fontSize:32, marginBottom:10 }}>⚓</div>
+            <div style={{ fontSize:15, fontWeight:700, color:DB.text, marginBottom:4 }}>None Found</div>
+            <div style={{ fontSize:13 }}>No {filter!=='all'?filter+'s':'marinas or ramps'} in this area.</div>
+          </div>
+        )}
+        {filtered.map(p => {
+          const isSel = selected?.id === p.id;
+          return (
+            <div key={p.id} onClick={()=>setSel(isSel?null:p)}
+              style={{ background:isSel?DB.blueSoft:'white', border:`1.5px solid ${isSel?DB.blue:DB.border}`, borderRadius:13, padding:'11px 14px', marginBottom:8, cursor:'pointer', transition:'all 0.12s', boxShadow:'0 1px 3px rgba(0,0,0,0.05)' }}>
+              <div style={{ display:'flex', alignItems:'flex-start', gap:11 }}>
+                <div style={{ width:38, height:38, borderRadius:10, background:`${kindColor[p.kind]||DB.blue}14`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, flexShrink:0 }}>
+                  {p.kind==='marina'?'⚓':p.kind==='ramp'?'🚤':'⛽'}
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+                    <span style={{ fontSize:14, fontWeight:700, color:DB.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{p.name}</span>
+                    <span style={{ fontSize:12.5, color:DB.muted, flexShrink:0 }}>{p.dist} mi</span>
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:7, marginTop:4, flexWrap:'wrap' }}>
+                    <span style={{ fontSize:11, fontWeight:700, color:kindColor[p.kind]||DB.blue, background:`${kindColor[p.kind]||DB.blue}12`, borderRadius:99, padding:'1px 8px' }}>{(kindLabel[p.kind]||'').replace(/^\S+\s/,'')}</span>
+                    {p.amenities.slice(0,4).map(a => <AmenityChip key={a} label={a}/>)}
+                  </div>
+                </div>
+              </div>
+
+              {isSel && (
+                <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${DB.border}` }}>
+                  {p.amenities.length > 0 && (
+                    <div style={{ marginBottom:10 }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:DB.muted, letterSpacing:'0.06em', marginBottom:5 }}>AMENITIES</div>
+                      <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
+                        {p.amenities.map(a => <AmenityChip key={a} label={a}/>)}
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:10 }}>
+                    {p.hours && <div style={{ fontSize:12, color:DB.muted }}>🕐 {p.hours}</div>}
+                    {p.phone && <div style={{ fontSize:12, color:DB.blue }}>📞 {p.phone}</div>}
+                    {p.fee === 'yes' && <div style={{ fontSize:12, color:DB.amber }}>💰 Fee required</div>}
+                  </div>
+                  <div style={{ display:'flex', gap:8 }}>
+                    {onPlanRoute && (
+                      <button onClick={e=>{ e.stopPropagation(); onPlanRoute({ to:p.name, toLat:String(p.lat), toLon:String(p.lon) }); }} style={{ all:'unset', cursor:'pointer', flex:1, padding:'9px 0', textAlign:'center', background:DB.blue, color:'white', borderRadius:9, fontSize:13, fontWeight:700 }}>
+                        🗺 Route Here
+                      </button>
+                    )}
+                    {p.website && (
+                      <button onClick={e=>{ e.stopPropagation(); window.open(p.website,'_blank'); }} style={{ all:'unset', cursor:'pointer', padding:'9px 14px', background:'#F1F5F9', color:DB.muted, borderRadius:9, fontSize:13, fontWeight:600 }}>
+                        Website ↗
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+// ── Report Hazard Modal ───────────────────────────────────────────────────────
+const HAZARD_TYPES = [
+  { id:'rock',        label:'Rock / Reef',       emoji:'🪨' },
+  { id:'shoal',       label:'Shoal / Sandbar',   emoji:'🏖️' },
+  { id:'debris',      label:'Floating Debris',   emoji:'📦' },
+  { id:'wreck',       label:'Sunken Wreck',       emoji:'🚢' },
+  { id:'obstruction', label:'Obstruction',        emoji:'⚠️' },
+  { id:'other',       label:'Other',              emoji:'❓' },
+];
+
+function ReportHazardModal({ lat, lon, authToken, user, onClose, onSubmitted }) {
+  const [type, setType]         = useState('');
+  const [desc, setDesc]         = useState('');
+  const [submitting, setSub]    = useState(false);
+  const [error, setError]       = useState('');
+  const [pickingLat, setPickingLat] = useState(lat);
+  const [pickingLon, setPickingLon] = useState(lon);
+
+  const submit = async () => {
+    if (!type) { setError('Choose a hazard type'); return; }
+    if (!pickingLat || !pickingLon) { setError('Location required'); return; }
+    setSub(true); setError('');
+    try {
+      const r = await fetch(`${API}/api/hazards`, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${authToken}` },
+        body: JSON.stringify({ lat: pickingLat, lon: pickingLon, type, description: desc }),
+      });
+      if (r.ok) { onSubmitted?.(); onClose(); }
+      else { const e = await r.json(); setError(e.error || 'Submit failed'); }
+    } catch { setError('Network error'); }
+    finally { setSub(false); }
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.55)', zIndex:2000, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background:'white', borderRadius:18, padding:24, width:420, maxWidth:'100%', boxShadow:'0 20px 60px rgba(0,0,0,0.3)' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:18 }}>
+          <div>
+            <h3 style={{ margin:0, fontSize:17, fontWeight:800, color:DB.text }}>Report a Hazard</h3>
+            <div style={{ fontSize:12, color:DB.muted, marginTop:2 }}>Help keep boaters safe</div>
+          </div>
+          <button onClick={onClose} style={{ all:'unset', cursor:'pointer', fontSize:22, color:DB.muted, lineHeight:1 }}>✕</button>
+        </div>
+
+        <div style={{ fontSize:11, fontWeight:700, color:DB.blue, letterSpacing:'0.06em', marginBottom:8 }}>HAZARD TYPE</div>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7, marginBottom:16 }}>
+          {HAZARD_TYPES.map(t => (
+            <button key={t.id} onClick={() => setType(t.id)} style={{
+              all:'unset', cursor:'pointer', padding:'9px 12px', borderRadius:10,
+              border:`2px solid ${type === t.id ? DB.blue : DB.border}`,
+              background: type === t.id ? DB.blueSoft : 'white',
+              display:'flex', alignItems:'center', gap:8, transition:'all 0.1s',
+            }}>
+              <span style={{ fontSize:18 }}>{t.emoji}</span>
+              <span style={{ fontSize:12.5, fontWeight:600, color: type === t.id ? DB.blue : DB.text }}>{t.label}</span>
+            </button>
+          ))}
+        </div>
+
+        <div style={{ fontSize:11, fontWeight:700, color:DB.blue, letterSpacing:'0.06em', marginBottom:6 }}>DESCRIPTION <span style={{ color:DB.muted, fontWeight:400 }}>(optional)</span></div>
+        <textarea value={desc} onChange={e => setDesc(e.target.value)}
+          placeholder="Describe the hazard — size, depth, visibility…"
+          rows={3} maxLength={300}
+          style={{ width:'100%', boxSizing:'border-box', padding:'9px 12px', border:`1.5px solid ${DB.border}`, borderRadius:10, fontSize:13, fontFamily:'inherit', resize:'vertical', outline:'none', color:DB.text }}
+          onFocus={e => e.target.style.borderColor = DB.blue}
+          onBlur={e => e.target.style.borderColor = DB.border}
+        />
+        <div style={{ fontSize:11, color:DB.muted, textAlign:'right', marginBottom:14 }}>{desc.length}/300</div>
+
+        <div style={{ background:DB.bg, border:`1px solid ${DB.border}`, borderRadius:10, padding:'8px 12px', marginBottom:16 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:DB.muted, marginBottom:3 }}>📍 LOCATION</div>
+          {pickingLat ? (
+            <div style={{ fontSize:13, color:DB.text }}>{pickingLat.toFixed(4)}°, {pickingLon.toFixed(4)}°</div>
+          ) : (
+            <div style={{ fontSize:13, color:DB.muted }}>No location — go to the map and tap a spot first</div>
+          )}
+        </div>
+
+        {error && <div style={{ background:DB.redSoft, border:`1px solid ${DB.red}33`, borderRadius:8, padding:'8px 12px', fontSize:13, color:DB.red, marginBottom:12 }}>{error}</div>}
+
+        <div style={{ display:'flex', gap:10 }}>
+          <button onClick={onClose} style={{ all:'unset', cursor:'pointer', flex:1, padding:'11px 0', textAlign:'center', borderRadius:10, border:`1.5px solid ${DB.border}`, fontSize:13.5, fontWeight:600, color:DB.muted }}>Cancel</button>
+          <button onClick={submit} disabled={submitting || !type} style={{ all:'unset', cursor: submitting||!type ? 'not-allowed':'pointer', flex:2, padding:'11px 0', textAlign:'center', borderRadius:10, background: submitting||!type ? '#94A3B8' : DB.red, color:'white', fontSize:13.5, fontWeight:700 }}>
+            {submitting ? 'Submitting…' : '🚨 Submit Report'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Hazards View ──────────────────────────────────────────────────────────────
+function HazardsView({ lat, lon, seamarks, authToken, user, onHazardSubmitted }) {
+  const [reported, setReported]   = useState([]);
+  const [filter, setFilter]       = useState('all');
+  const [showReport, setShowReport] = useState(false);
+  const [upvoted, setUpvoted]     = useState(new Set());
+
+  const fetchReported = () => {
+    if (!lat || !lon) return;
+    fetch(`${API}/api/hazards?lat=${lat}&lon=${lon}&radius=100`)
+      .then(r => r.ok ? r.json() : [])
+      .then(setReported).catch(()=>{});
+  };
+  useEffect(fetchReported, [lat, lon]);
+
+  const hazardEmoji = type => {
+    if (!type) return '⚠️';
+    if (type.includes('rock') || type.includes('reef')) return '🪨';
+    if (type.includes('wreck')) return '🚢';
+    if (type.includes('shoal')) return '🏖️';
+    if (type.includes('debris')) return '📦';
+    if (type.includes('obstruction')) return '🚧';
+    return '⚠️';
+  };
+
+  const osmHazards = (seamarks||[]).map(h => ({ ...h, source:'noaa_osm' }));
+  const userHazards = reported.map(h => ({ ...h, source:'community', name: h.description || HAZARD_TYPES.find(t=>t.id===h.type)?.label || h.type }));
+  const all = [...osmHazards, ...userHazards];
+  const filterTypes = ['all', 'rock', 'shoal', 'wreck', 'debris', 'obstruction'];
+  const filtered = filter === 'all' ? all : all.filter(h => (h.type||'').includes(filter));
+
+  const upvote = async (id) => {
+    if (upvoted.has(id)) return;
+    try {
+      const r = await fetch(`${API}/api/hazards/${id}/upvote`, { method:'POST', headers:{ 'Authorization':`Bearer ${authToken}` }});
+      if (r.ok) {
+        setUpvoted(s => new Set([...s, id]));
+        setReported(prev => prev.map(h => h.id === id ? { ...h, upvotes: (h.upvotes||0)+1 } : h));
+      }
+    } catch {}
+  };
+
+  return (
+    <div style={{ height:'100%', overflowY:'auto', background:DB.bg, padding:16 }}>
+      <div style={{ maxWidth:800, margin:'0 auto' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
+          <div>
+            <h2 style={{ margin:0, fontSize:20, fontWeight:800, color:DB.text }}>Hazards</h2>
+            <div style={{ fontSize:13, color:DB.muted, marginTop:3 }}>{all.length} hazards found{lat ? ` near ${lat.toFixed(2)}°, ${lon.toFixed(2)}°` : ''}</div>
+          </div>
+          <button onClick={() => setShowReport(true)} style={{ all:'unset', cursor:'pointer', display:'flex', alignItems:'center', gap:7, padding:'9px 14px', background:DB.red, color:'white', borderRadius:10, fontSize:13, fontWeight:700, boxShadow:`0 2px 8px ${DB.red}55` }}>
+            <span style={{ fontSize:16 }}>🚨</span> Report Hazard
+          </button>
+        </div>
+
+        {/* Filter chips */}
+        <div style={{ display:'flex', gap:6, marginBottom:14, flexWrap:'wrap' }}>
+          {filterTypes.map(f => (
+            <button key={f} onClick={() => setFilter(f)} style={{ all:'unset', cursor:'pointer', padding:'5px 12px', borderRadius:99, fontSize:12, fontWeight:600, border:`1.5px solid ${filter===f ? DB.blue : DB.border}`, background: filter===f ? DB.blueSoft : 'white', color: filter===f ? DB.blue : DB.muted, transition:'all 0.1s' }}>
+              {f === 'all' ? 'All' : hazardEmoji(f)+' '+f.charAt(0).toUpperCase()+f.slice(1)}
+            </button>
+          ))}
+        </div>
+
+        {filtered.length === 0 && (
+          <div style={{ textAlign:'center', padding:'40px 0', color:DB.muted }}>
+            <div style={{ fontSize:36, marginBottom:12 }}>✅</div>
+            <div style={{ fontSize:15, fontWeight:700, color:DB.green, marginBottom:6 }}>No Hazards Found</div>
+            <div style={{ fontSize:13 }}>No hazards in this area{filter!=='all'?' matching that filter':''}.</div>
+          </div>
+        )}
+
+        {filtered.map((h, i) => {
+          const isUser = h.source === 'community';
+          return (
+            <div key={h.id||i} style={{ background:'white', border:`1px solid ${DB.border}`, borderRadius:12, padding:'11px 14px', marginBottom:8, display:'flex', alignItems:'flex-start', gap:12, boxShadow:'0 1px 3px rgba(0,0,0,0.05)' }}>
+              <div style={{ width:36, height:36, borderRadius:10, background: isUser ? DB.amberSoft : DB.redSoft, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, flexShrink:0 }}>
+                {hazardEmoji(h.type)}
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:7, marginBottom:3, flexWrap:'wrap' }}>
+                  <span style={{ fontSize:13.5, fontWeight:700, color:DB.text }}>{h.name || h.type || 'Hazard'}</span>
+                  <span style={{ fontSize:10, fontWeight:700, color: isUser ? DB.amber : DB.muted, background: isUser ? DB.amberSoft : '#F1F5F9', borderRadius:99, padding:'1px 7px' }}>{isUser ? '👤 Community Report' : 'NOAA/OSM'}</span>
+                </div>
+                {h.description && h.description !== h.name && <div style={{ fontSize:12.5, color:DB.muted, marginBottom:4 }}>{h.description}</div>}
+                <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+                  {h.type && h.type !== h.name && <span style={{ fontSize:11.5, color:DB.muted }}>Type: {h.type}</span>}
+                  {h.dist_km != null && <span style={{ fontSize:11.5, color:DB.muted }}>📍 {h.dist_km} km away</span>}
+                  {h.reportedBy && <span style={{ fontSize:11.5, color:DB.muted }}>By {h.reportedBy}</span>}
+                  {h.reportedAt && <span style={{ fontSize:11.5, color:DB.muted }}>{new Date(h.reportedAt).toLocaleDateString()}</span>}
+                </div>
+              </div>
+              {isUser && (
+                <button onClick={() => upvote(h.id)} disabled={upvoted.has(h.id)} style={{ all:'unset', cursor: upvoted.has(h.id)?'default':'pointer', display:'flex', flexDirection:'column', alignItems:'center', gap:2, padding:'4px 8px', borderRadius:8, border:`1.5px solid ${upvoted.has(h.id)?DB.amber:DB.border}`, background: upvoted.has(h.id)?DB.amberSoft:'white', flexShrink:0 }}>
+                  <span style={{ fontSize:14 }}>👍</span>
+                  <span style={{ fontSize:10, fontWeight:700, color: upvoted.has(h.id)?DB.amber:DB.muted }}>{h.upvotes||0}</span>
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {showReport && (
+        <ReportHazardModal lat={lat} lon={lon} authToken={authToken} user={user} onClose={() => setShowReport(false)} onSubmitted={() => { fetchReported(); onHazardSubmitted?.(); }}/>
+      )}
+    </div>
+  );
+}
+
+// ── Alerts View ──────────────────────────────────────────────────────────────
+function AlertsView({ lat, lon, routeSafety, boat, bridges }) {
+  const [nwsAlerts, setNwsAlerts] = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [dismissed, setDismissed] = useState(new Set());
+
+  useEffect(() => {
+    if (!lat || !lon) { setLoading(false); return; }
+    setLoading(true);
+    fetch(`${API}/api/noaa/alerts?lat=${lat}&lon=${lon}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { setNwsAlerts(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [lat, lon]);
+
+  const sevOrder = { Extreme:0, Severe:1, Moderate:2, Minor:3, Unknown:4 };
+  const sevColor = sev => sev==='Extreme'||sev==='Severe' ? DB.red : sev==='Moderate' ? DB.amber : DB.blue;
+  const sevBg    = sev => sev==='Extreme'||sev==='Severe' ? DB.redSoft : sev==='Moderate' ? DB.amberSoft : DB.blueSoft;
+  const sevLabel = sev => sev==='Extreme'?'🚨 Extreme':sev==='Severe'?'🔴 Severe':sev==='Moderate'?'⚠️ Moderate':'ℹ️ '+sev;
+
+  const bridgeAlerts = (bridges||[])
+    .filter(b => b.verClr_ft != null && boat?.mastHeight && b.verClr_ft < parseFloat(boat.mastHeight))
+    .map(b => ({
+      id: `bridge-${b.lat}-${b.lon}`, event:'Bridge Clearance Warning',
+      headline:`${b.name||'Bridge'}: ${b.verClr_ft}ft clearance — your boat is ${boat.mastHeight}`,
+      severity:'Severe', areaDesc:`${b.dist_km} km away`, expires: null,
+    }));
+
+  const routeAlerts = (routeSafety?.reasons||[]).map((r, i) => ({
+    id:`route-${i}`, event:'Route Advisory',
+    headline: r, severity:'Moderate', areaDesc:'Active route', expires: null,
+  }));
+
+  const all = [...bridgeAlerts, ...routeAlerts,
+    ...nwsAlerts.map(a => ({ ...a, id: a.id || a.event })),
+  ].filter(a => !dismissed.has(a.id))
+   .sort((a,b) => (sevOrder[a.severity]||4) - (sevOrder[b.severity]||4));
+
+  return (
+    <div style={{ height:'100%', overflowY:'auto', background:DB.bg, padding:16 }}>
+      <div style={{ maxWidth:800, margin:'0 auto' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+          <div>
+            <h2 style={{ margin:0, fontSize:20, fontWeight:800, color:DB.text }}>Alerts</h2>
+            <div style={{ fontSize:13, color:DB.muted, marginTop:3 }}>{lat && lon ? `Near ${lat.toFixed(3)}, ${lon.toFixed(3)}` : 'Set a location to see alerts'}</div>
+          </div>
+          {all.length > 0 && (
+            <span style={{ background:DB.red, color:'white', borderRadius:99, fontSize:12, fontWeight:700, padding:'3px 10px' }}>{all.length} Active</span>
+          )}
+        </div>
+
+        {loading && (
+          <div style={{ display:'flex', alignItems:'center', gap:10, padding:'20px 0', color:DB.muted }}>
+            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${DB.blue}`, borderTopColor:'transparent', animation:'spin 0.9s linear infinite' }}/>
+            Fetching NOAA alerts…
+          </div>
+        )}
+
+        {!loading && all.length === 0 && (
+          <div style={{ textAlign:'center', padding:'40px 0', color:DB.muted }}>
+            <div style={{ fontSize:36, marginBottom:12 }}>✅</div>
+            <div style={{ fontSize:16, fontWeight:700, color:DB.green, marginBottom:6 }}>No Active Alerts</div>
+            <div style={{ fontSize:13 }}>No weather warnings or hazard alerts for this area.</div>
+          </div>
+        )}
+
+        {all.map(alert => (
+          <div key={alert.id} style={{ background:sevBg(alert.severity), border:`1.5px solid ${sevColor(alert.severity)}33`, borderLeft:`4px solid ${sevColor(alert.severity)}`, borderRadius:12, padding:'12px 14px', marginBottom:10, position:'relative' }}>
+            <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:12 }}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:5, flexWrap:'wrap' }}>
+                  <span style={{ fontSize:11, fontWeight:700, color:sevColor(alert.severity), background:`${sevColor(alert.severity)}18`, borderRadius:99, padding:'2px 8px' }}>{sevLabel(alert.severity)}</span>
+                  {alert.areaDesc && <span style={{ fontSize:11, color:DB.muted }}>📍 {alert.areaDesc}</span>}
+                  {alert.expires && <span style={{ fontSize:11, color:DB.muted }}>⏱ Expires {new Date(alert.expires).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</span>}
+                </div>
+                <div style={{ fontSize:14, fontWeight:700, color:DB.text, marginBottom:4 }}>{alert.event}</div>
+                <div style={{ fontSize:13, color:DB.text, lineHeight:1.5 }}>{alert.headline}</div>
+                {alert.description && (
+                  <details style={{ marginTop:8 }}>
+                    <summary style={{ fontSize:12, color:DB.blue, cursor:'pointer', fontWeight:600 }}>Full details</summary>
+                    <div style={{ fontSize:12, color:DB.muted, marginTop:6, lineHeight:1.6, whiteSpace:'pre-wrap' }}>{alert.description}</div>
+                  </details>
+                )}
+                {alert.senderName && <div style={{ fontSize:11, color:DB.muted, marginTop:6 }}>Source: {alert.senderName}</div>}
+              </div>
+              <button onClick={() => setDismissed(s => new Set([...s, alert.id]))}
+                style={{ all:'unset', cursor:'pointer', color:DB.muted, fontSize:18, lineHeight:1, flexShrink:0, padding:'0 4px' }}>✕</button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+// ── Weather View ─────────────────────────────────────────────────────────────
+function WeatherView({ lat, lon }) {
+  const [buoy, setBuoy]         = useState(null);
+  const [obs, setObs]           = useState(null);
+  const [forecast, setForecast] = useState([]);
+  const [tides, setTides]       = useState(null);
+  const [loading, setLoading]   = useState(true);
+
+  useEffect(() => {
+    if (!lat || !lon) { setLoading(false); return; }
+    setLoading(true);
+    const all = [
+      fetch(`${API}/api/noaa/buoys?lat=${lat}&lon=${lon}&n=1`)
+        .then(r => r.ok ? r.json() : [])
+        .then(async buoys => {
+          if (!buoys.length) return;
+          setBuoy(buoys[0]);
+          const o = await fetch(`${API}/api/noaa/buoys/${buoys[0].id}/obs`).then(r => r.ok ? r.json() : null).catch(()=>null);
+          if (o) setObs(o);
+        }).catch(()=>{}),
+      fetch(`${API}/api/noaa/forecast?lat=${lat}&lon=${lon}`)
+        .then(r => r.ok ? r.json() : [])
+        .then(setForecast).catch(()=>{}),
+      fetch(`${API}/api/noaa/tides?lat=${lat}&lon=${lon}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) setTides(d); }).catch(()=>{}),
+    ];
+    Promise.all(all).finally(() => setLoading(false));
+  }, [lat, lon]);
+
+  const windDir = deg => {
+    if (deg == null) return '—';
+    const dirs = ['N','NE','E','SE','S','SW','W','NW'];
+    return dirs[Math.round(deg/45) % 8];
+  };
+
+  const beaufort = kt => {
+    if (kt == null) return null;
+    if (kt < 1) return { n:0, label:'Calm' };
+    if (kt < 4) return { n:1, label:'Light air' };
+    if (kt < 8) return { n:2, label:'Light breeze' };
+    if (kt < 12) return { n:3, label:'Gentle breeze' };
+    if (kt < 18) return { n:4, label:'Moderate breeze' };
+    if (kt < 25) return { n:5, label:'Fresh breeze' };
+    if (kt < 32) return { n:6, label:'Strong breeze' };
+    if (kt < 40) return { n:7, label:'Near gale' };
+    return { n:8, label:'Gale', danger:true };
+  };
+
+  const bf = beaufort(obs?.windSpeed_kt);
+  const waveColor = obs?.waveHeight_ft == null ? DB.muted : obs.waveHeight_ft < 2 ? DB.green : obs.waveHeight_ft < 4 ? DB.amber : DB.red;
+
+  const tidePairs = React.useMemo(() => {
+    if (!tides?.predictions?.length) return [];
+    const preds = tides.predictions;
+    const pairs = [];
+    for (let i = 1; i < preds.length - 1; i++) {
+      const prev = parseFloat(preds[i-1].v), cur = parseFloat(preds[i].v), next = parseFloat(preds[i+1].v);
+      if ((cur > prev && cur > next) || (cur < prev && cur < next)) {
+        pairs.push({ t: preds[i].t, v: cur, type: cur > prev ? 'H' : 'L' });
+      }
+    }
+    return pairs.slice(0, 6);
+  }, [tides]);
+
+  const Card = ({ title, children, accent: ca = DB.blue }) => (
+    <div style={{ background:DB.card, border:`1px solid ${DB.border}`, borderRadius:14, padding:'14px 16px', marginBottom:12, boxShadow:'0 1px 4px rgba(0,0,0,0.05)' }}>
+      <div style={{ fontSize:10, fontWeight:800, color:ca, letterSpacing:'0.07em', marginBottom:10 }}>{title}</div>
+      {children}
+    </div>
+  );
+  const Stat = ({ label, value, unit, color }) => (
+    <div style={{ textAlign:'center', flex:1 }}>
+      <div style={{ fontSize:22, fontWeight:800, color:color||DB.text, lineHeight:1 }}>{value ?? '—'}</div>
+      {unit && <div style={{ fontSize:11, color:DB.muted, marginTop:2 }}>{unit}</div>}
+      <div style={{ fontSize:11, color:DB.muted, marginTop:3, fontWeight:600 }}>{label}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ height:'100%', overflowY:'auto', background:DB.bg, padding:16 }}>
+      <div style={{ maxWidth:800, margin:'0 auto' }}>
+        <div style={{ marginBottom:14 }}>
+          <h2 style={{ margin:0, fontSize:20, fontWeight:800, color:DB.text }}>Weather</h2>
+          {buoy && <div style={{ fontSize:13, color:DB.muted, marginTop:3 }}>Conditions from NDBC buoy <b>{buoy.name}</b> · {buoy.distance_km?.toFixed(0)} km away</div>}
+        </div>
+
+        {loading && (
+          <div style={{ display:'flex', alignItems:'center', gap:10, padding:'20px 0', color:DB.muted }}>
+            <div style={{ width:18, height:18, borderRadius:'50%', border:`2px solid ${DB.blue}`, borderTopColor:'transparent', animation:'spin 0.9s linear infinite' }}/>
+            Fetching marine conditions…
+          </div>
+        )}
+
+        {obs && (
+          <Card title="CURRENT CONDITIONS" accent={DB.blue}>
+            <div style={{ display:'flex', gap:8, marginBottom:14 }}>
+              <Stat label="Air Temp" value={obs.airTemp_f} unit="°F"/>
+              <Stat label="Water Temp" value={obs.waterTemp_f} unit="°F" color='#0EA5E9'/>
+              <Stat label="Wave Height" value={obs.waveHeight_ft} unit="ft" color={waveColor}/>
+              <Stat label="Wind" value={obs.windSpeed_kt} unit="knots"/>
+              <Stat label="Wind Dir" value={windDir(obs.windDir_deg)} color={DB.muted}/>
+              {obs.windGust_kt && <Stat label="Gusts" value={obs.windGust_kt} unit="knots" color={DB.amber}/>}
+              {obs.pressure_mb && <Stat label="Pressure" value={obs.pressure_mb} unit="mb"/>}
+            </div>
+            {bf && (
+              <div style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', borderRadius:9, background: bf.danger ? DB.redSoft : bf.n >= 5 ? DB.amberSoft : DB.greenSoft }}>
+                <div style={{ display:'flex', gap:2 }}>
+                  {[...Array(8)].map((_,i) => (
+                    <div key={i} style={{ width:7, height: 10 + i * 4, borderRadius:2, background: i < bf.n ? (bf.danger?DB.red:bf.n>=5?DB.amber:DB.green) : DB.border }}/>
+                  ))}
+                </div>
+                <div>
+                  <span style={{ fontSize:13, fontWeight:700, color:DB.text }}>Beaufort {bf.n}</span>
+                  <span style={{ fontSize:12, color:DB.muted, marginLeft:8 }}>{bf.label}</span>
+                  {bf.danger && <span style={{ marginLeft:8, fontSize:12, color:DB.red, fontWeight:700 }}>⚠ Use caution</span>}
+                </div>
+              </div>
+            )}
+          </Card>
+        )}
+
+        {tidePairs.length > 0 && (
+          <Card title={`TIDES · ${tides.station}`} accent='#0EA5E9'>
+            <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+              {tidePairs.map((t, i) => (
+                <div key={i} style={{ flex:1, minWidth:110, background: t.type==='H' ? DB.blueSoft : '#F8FAFC', border:`1px solid ${DB.border}`, borderRadius:9, padding:'8px 10px', textAlign:'center' }}>
+                  <div style={{ fontSize:12, fontWeight:800, color: t.type==='H' ? DB.blue : DB.muted }}>{t.type==='H' ? '▲ HIGH' : '▼ LOW'}</div>
+                  <div style={{ fontSize:18, fontWeight:700, color:DB.text, margin:'4px 0' }}>{parseFloat(t.v).toFixed(1)} <span style={{ fontSize:11, color:DB.muted }}>ft</span></div>
+                  <div style={{ fontSize:11, color:DB.muted }}>{t.t.split(' ')[1]?.slice(0,5) || t.t}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {forecast.length > 0 && (
+          <Card title="12-HOUR FORECAST" accent={DB.blue}>
+            <div style={{ display:'flex', gap:6, overflowX:'auto', paddingBottom:4 }}>
+              {forecast.slice(0, 12).map((p, i) => {
+                const time = new Date(p.startTime).toLocaleTimeString([], { hour:'numeric', hour12:true });
+                const isNight = p.isDaytime === false;
+                return (
+                  <div key={i} style={{ minWidth:72, textAlign:'center', padding:'8px 6px', borderRadius:10, background:'#F8FAFC', border:`1px solid ${DB.border}`, flexShrink:0 }}>
+                    <div style={{ fontSize:11, color:DB.muted, fontWeight:600 }}>{time}</div>
+                    <div style={{ fontSize:20, margin:'5px 0' }}>{isNight ? '🌙' : p.temperature > 85 ? '☀️' : p.shortForecast?.toLowerCase().includes('rain') ? '🌧️' : p.shortForecast?.toLowerCase().includes('cloud') ? '⛅' : '🌤️'}</div>
+                    <div style={{ fontSize:14, fontWeight:700, color:DB.text }}>{p.temperature}°</div>
+                    <div style={{ fontSize:10, color:DB.muted, marginTop:3, lineHeight:1.3, overflow:'hidden', textOverflow:'ellipsis', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical' }}>{p.shortForecast}</div>
+                    {p.windSpeed && <div style={{ fontSize:10, color:DB.muted, marginTop:3 }}>💨 {p.windSpeed}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        )}
+
+        {!loading && !obs && !forecast.length && (
+          <div style={{ textAlign:'center', padding:'40px 0', color:DB.muted }}>
+            <div style={{ fontSize:36, marginBottom:12 }}>📡</div>
+            <div style={{ fontSize:15, fontWeight:700, color:DB.text, marginBottom:6 }}>No location set</div>
+            <div style={{ fontSize:13 }}>Plan a route or enable location access to see weather conditions.</div>
+          </div>
+        )}
+      </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+// ── Trip Logger Hook ─────────────────────────────────────────────────────────
+function useTripLogger({ authToken, boat, appUserPos }) {
+  const [isLogging, setIsLogging]   = useState(false);
+  const [startTime, setStartTime]   = useState(null);
+  const [elapsed, setElapsed]       = useState('0:00');
+  const [distNm, setDistNm]         = useState(0);
+  const trackRef    = useRef([]);
+  const lastPosRef  = useRef(null);
+  const timerRef    = useRef(null);
+  const maxSpdRef   = useRef(0);
+
+  // Accumulate GPS points while logging
+  useEffect(() => {
+    if (!isLogging || !appUserPos) return;
+    const { lat, lng, speedKts } = appUserPos;
+    if (lat == null || lng == null) return;
+    const last = lastPosRef.current;
+    const point = { lat, lng: lng ?? appUserPos.lon, spd: speedKts ?? 0, ts: Date.now() };
+    if (last) {
+      const d = _haversineNm(last.lat, last.lng, lat, lng ?? appUserPos.lon);
+      if (d > 0.005) { // only add if moved >~30ft to avoid noise
+        setDistNm(prev => prev + d);
+        trackRef.current.push(point);
+        lastPosRef.current = point;
+        if ((speedKts ?? 0) > maxSpdRef.current) maxSpdRef.current = speedKts ?? 0;
+      }
+    } else {
+      trackRef.current = [point];
+      lastPosRef.current = point;
+    }
+  }, [isLogging, appUserPos?.lat, appUserPos?.lng]);
+
+  // Elapsed time ticker
+  useEffect(() => {
+    if (!isLogging || !startTime) { clearInterval(timerRef.current); return; }
+    timerRef.current = setInterval(() => {
+      const sec = Math.floor((Date.now() - startTime) / 1000);
+      const m = Math.floor(sec / 60), s = sec % 60;
+      setElapsed(`${m}:${String(s).padStart(2, '0')}`);
+    }, 1000);
+    return () => clearInterval(timerRef.current);
+  }, [isLogging, startTime]);
+
+  const startLog = () => {
+    trackRef.current = [];
+    lastPosRef.current = null;
+    maxSpdRef.current = 0;
+    setDistNm(0);
+    setElapsed('0:00');
+    setStartTime(Date.now());
+    setIsLogging(true);
+  };
+
+  const stopLog = async () => {
+    setIsLogging(false);
+    clearInterval(timerRef.current);
+    const track = trackRef.current;
+    if (!track.length || !authToken) return;
+    const endedAt = new Date().toISOString();
+    const startedAt = new Date(startTime).toISOString();
+    const durationMin = Math.round((Date.now() - startTime) / 60000);
+    const avgSpeedKt = track.length > 1
+      ? track.reduce((s, p) => s + (p.spd || 0), 0) / track.length : 0;
+    try {
+      await fetch(`${API}/api/trip-logs`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          startedAt, endedAt, durationMin,
+          distanceNm: Math.round(distNm * 100) / 100,
+          maxSpeedKt: Math.round(maxSpdRef.current * 10) / 10,
+          avgSpeedKt: Math.round(avgSpeedKt * 10) / 10,
+          boatId: boat?.id ?? null,
+          boatName: boat?.name ?? null,
+          track,
+        }),
+      });
+    } catch { /* non-fatal */ }
+  };
+
+  return { isLogging, elapsed, distNm, startLog, stopLog };
+}
+
+// ── Trip Logs View ───────────────────────────────────────────────────────────
+function TripLogsView({ authToken, accent, boat }) {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedLog, setSelectedLog] = useState(null); // full log with track
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const replayRef = useRef(null);
+
+  useEffect(() => {
+    if (!authToken) return;
+    fetch(`${API}/api/trip-logs`, { headers: { Authorization: `Bearer ${authToken}` } })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => { setLogs(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [authToken]);
+
+  const openLog = async (id) => {
+    if (selectedLog?.id === id) { setSelectedLog(null); return; }
+    setLoadingDetail(true);
+    try {
+      const r = await fetch(`${API}/api/trip-logs/${id}`, { headers: { Authorization: `Bearer ${authToken}` } });
+      if (r.ok) setSelectedLog(await r.json());
+    } finally { setLoadingDetail(false); }
+  };
+
+  const deleteLog = async (id) => {
+    await fetch(`${API}/api/trip-logs/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${authToken}` } });
+    setLogs(l => l.filter(x => x.id !== id));
+    if (selectedLog?.id === id) setSelectedLog(null);
+  };
+
+  const renameLog = async (id) => {
+    const name = editName.trim();
+    if (!name) return;
+    await fetch(`${API}/api/trip-logs/${id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    setLogs(l => l.map(x => x.id === id ? { ...x, name } : x));
+    if (selectedLog?.id === id) setSelectedLog(s => ({ ...s, name }));
+    setEditingId(null);
+  };
+
+  const fmtDuration = (min) => {
+    if (!min) return '—';
+    const h = Math.floor(min / 60), m = Math.round(min % 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+  const fmtDist = (nm) => nm > 0 ? `${nm.toFixed(1)} nm` : '—';
+  const fmtDate = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+  const fmtTime = (iso) => {
+    if (!iso) return '';
+    return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  };
+
+  // Build a simple SVG track preview from track points
+  const TrackPreview = ({ track, accent: a }) => {
+    if (!track?.length) return null;
+    const lats = track.map(p => p.lat), lons = track.map(p => p.lng ?? p.lon);
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+    const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+    const W = 240, H = 120, PAD = 8;
+    const xScale = (maxLon - minLon) || 0.0001, yScale = (maxLat - minLat) || 0.0001;
+    const toX = lon => PAD + ((lon - minLon) / xScale) * (W - PAD*2);
+    const toY = lat => H - PAD - ((lat - minLat) / yScale) * (H - PAD*2);
+    const pts = track.map(p => `${toX(p.lng??p.lon).toFixed(1)},${toY(p.lat).toFixed(1)}`).join(' ');
+    const start = track[0], end = track[track.length - 1];
+    return (
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', borderRadius: 10 }}>
+        <rect width={W} height={H} rx="10" fill={DB.bg}/>
+        <polyline points={pts} fill="none" stroke={a} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.8"/>
+        <circle cx={toX(start.lng??start.lon)} cy={toY(start.lat)} r="4" fill={DB.green} stroke="white" strokeWidth="1.5"/>
+        <circle cx={toX(end.lng??end.lon)} cy={toY(end.lat)} r="4" fill={a} stroke="white" strokeWidth="1.5"/>
+      </svg>
+    );
+  };
+
+  return (
+    <div style={{ padding: '8px 20px 32px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ marginTop: 6 }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: DB.muted, fontWeight: 600, textTransform: 'uppercase' }}>History</div>
+        <div style={{ fontSize: 26, color: DB.text, fontWeight: 700, letterSpacing: '-0.02em', marginTop: 2 }}>Trip Logs</div>
+      </div>
+
+      {loading && (
+        <div style={{ textAlign: 'center', padding: 40, color: DB.muted, fontSize: 13 }}>Loading…</div>
+      )}
+      {!loading && logs.length === 0 && (
+        <div style={{ textAlign: 'center', padding: '40px 20px', color: DB.muted }}>
+          <div style={{ fontSize: 36, marginBottom: 12 }}>🗺️</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: DB.text, marginBottom: 6 }}>No trips recorded yet</div>
+          <div style={{ fontSize: 13 }}>Start a trip from the map to log your journey.</div>
+        </div>
+      )}
+
+      {logs.map(log => (
+        <div key={log.id} style={{ background: DB.card, border: `1.5px solid ${selectedLog?.id === log.id ? accent : DB.border}`, borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', transition: 'border-color 0.15s' }}>
+
+          {/* Log header row */}
+          <div style={{ padding: '14px 16px', cursor: 'pointer' }} onClick={() => openLog(log.id)}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              {editingId === log.id ? (
+                <input
+                  autoFocus
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') renameLog(log.id); if (e.key === 'Escape') setEditingId(null); }}
+                  onBlur={() => renameLog(log.id)}
+                  onClick={e => e.stopPropagation()}
+                  style={{ fontSize: 15, fontWeight: 700, color: DB.text, border: `1.5px solid ${accent}`, borderRadius: 8, padding: '3px 8px', background: DB.blueSoft, outline: 'none', flex: 1, marginRight: 8 }}
+                />
+              ) : (
+                <span style={{ fontSize: 15, fontWeight: 700, color: DB.text, flex: 1 }}>{log.name}</span>
+              )}
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                <button onClick={() => { setEditingId(log.id); setEditName(log.name); }}
+                  style={{ all: 'unset', cursor: 'pointer', fontSize: 13, color: DB.muted, padding: '2px 6px', borderRadius: 6, background: DB.bg }}>✏️</button>
+                <button onClick={() => { if (confirm(`Delete "${log.name}"?`)) deleteLog(log.id); }}
+                  style={{ all: 'unset', cursor: 'pointer', fontSize: 13, color: DB.red, padding: '2px 6px', borderRadius: 6, background: DB.redSoft }}>🗑</button>
+              </div>
+            </div>
+
+            <div style={{ fontSize: 11, color: DB.muted, marginBottom: 8 }}>
+              {fmtDate(log.startedAt)} · {fmtTime(log.startedAt)}
+              {log.boatName ? ` · ${log.boatName}` : ''}
+            </div>
+
+            <div style={{ display: 'flex', gap: 16 }}>
+              {[
+                { label: 'Distance', val: fmtDist(log.distanceNm) },
+                { label: 'Duration', val: fmtDuration(log.durationMin) },
+                { label: 'Max speed', val: log.maxSpeedKt > 0 ? `${log.maxSpeedKt.toFixed(1)} kt` : '—' },
+                { label: 'Avg speed', val: log.avgSpeedKt > 0 ? `${log.avgSpeedKt.toFixed(1)} kt` : '—' },
+              ].map(s => (
+                <div key={s.label} style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, color: DB.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{s.label}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: DB.text, marginTop: 2 }}>{s.val}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Expanded track preview */}
+          {selectedLog?.id === log.id && (
+            <div style={{ borderTop: `1px solid ${DB.border}`, padding: 16 }}>
+              {loadingDetail ? (
+                <div style={{ textAlign: 'center', padding: 20, color: DB.muted, fontSize: 13 }}>Loading track…</div>
+              ) : selectedLog?.track?.length > 1 ? (
+                <div>
+                  <div style={{ fontSize: 11, color: DB.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>GPS Track</div>
+                  <TrackPreview track={selectedLog.track} accent={accent}/>
+                  <div style={{ marginTop: 12, display: 'flex', gap: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: DB.muted }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: DB.green, border: '1.5px solid white', flexShrink: 0 }}/>
+                      Start: {fmtTime(selectedLog.startedAt)}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: DB.muted }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: accent, border: '1.5px solid white', flexShrink: 0 }}/>
+                      End: {fmtTime(selectedLog.endedAt)}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: DB.muted, textAlign: 'center', padding: '10px 0' }}>Not enough track points to display.</div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Sea State / Wave Forecast View ───────────────────────────────────────────
+function SeaStateView({ lat, lon, accent }) {
+  const [data, setData]         = useState(null);
+  const [loading, setLoading]   = useState(true);
+  const [err, setErr]           = useState(null);
+  const [selDayIdx, setSelDayIdx] = useState(0);
+
+  useEffect(() => {
+    if (!lat || !lon) { setErr('Enable GPS or plan a route to see wave data.'); setLoading(false); return; }
+    let cancelled = false;
+    setLoading(true); setErr(null);
+    fetch(`${API}/api/marine/waves?lat=${lat}&lon=${lon}`)
+      .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.error || 'Error')))
+      .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
+      .catch(e => { if (!cancelled) { setErr(typeof e === 'string' ? e : 'Could not load wave forecast.'); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [lat, lon]);
+
+  const compassPt = deg => {
+    if (deg == null) return '—';
+    const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return dirs[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+  };
+
+  const SS = {
+    go:      { bg: DB.greenSoft, fg: DB.green,  border: '#86EFAC', label: 'GO'      },
+    caution: { bg: DB.amberSoft, fg: DB.amber,  border: '#FCD34D', label: 'CAUTION' },
+    nogo:    { bg: DB.redSoft,   fg: DB.red,    border: '#FCA5A5', label: 'NO-GO'   },
+  };
+
+  if (loading) return (
+    <div style={{ padding: 48, textAlign: 'center', color: DB.muted }}>
+      <div style={{ fontSize: 32, marginBottom: 10 }}>🌊</div>
+      <div style={{ fontSize: 13 }}>Loading wave forecast…</div>
+    </div>
+  );
+  if (err || !data) return (
+    <div style={{ padding: 40, textAlign: 'center', color: DB.muted }}>
+      <div style={{ fontSize: 36, marginBottom: 10 }}>🌊</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: DB.text, marginBottom: 4 }}>{err || 'No wave data available'}</div>
+      <div style={{ fontSize: 12 }}>Wave data requires a coastal or ocean location.</div>
+    </div>
+  );
+
+  const { current, daily } = data;
+  const cs = SS[current.status] || SS.go;
+  const selDay = daily[selDayIdx] || daily[0];
+  const hours  = selDay?.hours || [];
+  const chartH = hours.filter(h => h.waveHeightFt != null);
+
+  const CW = 380, CH = 72;
+  const maxH  = Math.max(...chartH.map(h => h.waveHeightFt), 5);
+  const toX   = h => (h / 24) * CW;
+  const toY   = ft => CH - (ft / maxH) * CH;
+  const pts   = chartH.map(h => `${toX(h.hour).toFixed(1)},${toY(h.waveHeightFt).toFixed(1)}`).join(' ');
+  const areaPts = chartH.length
+    ? `${toX(chartH[0].hour).toFixed(1)},${CH} ${pts} ${toX(chartH[chartH.length - 1].hour).toFixed(1)},${CH}`
+    : '';
+  const y2 = toY(2), y4 = toY(4);
+  const nowHour = new Date().getHours() + new Date().getMinutes() / 60;
+
+  return (
+    <div style={{ padding: '12px 20px 48px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Header */}
+      <div style={{ marginTop: 6 }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: DB.muted, fontWeight: 700, textTransform: 'uppercase' }}>Marine Forecast</div>
+        <div style={{ fontSize: 26, color: DB.text, fontWeight: 800, letterSpacing: '-0.02em', marginTop: 2 }}>Sea State</div>
+      </div>
+
+      {/* Current conditions */}
+      <div style={{ background: cs.bg, border: `1.5px solid ${cs.border}`, borderRadius: 16, padding: '16px 18px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: cs.fg, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Current Conditions</div>
+          <span style={{ background: cs.fg, color: '#fff', borderRadius: 99, fontSize: 10, fontWeight: 800, padding: '3px 10px', letterSpacing: '0.07em' }}>
+            {cs.label}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 12 }}>
+          <span style={{ fontSize: 46, fontWeight: 900, color: cs.fg, lineHeight: 1, letterSpacing: '-0.03em' }}>
+            {current.waveHeightFt?.toFixed(1) ?? '—'}
+          </span>
+          <span style={{ fontSize: 18, fontWeight: 600, color: DB.muted }}>ft</span>
+          <span style={{ fontSize: 12, color: DB.muted, marginLeft: 4 }}>significant wave height</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+          {[
+            { label: 'Period',   val: current.wavePeriodS  ? `${current.wavePeriodS}s`              : '—' },
+            { label: 'Swell',    val: current.swellHeightFt ? `${current.swellHeightFt.toFixed(1)} ft` : '—' },
+            { label: 'From',     val: compassPt(current.waveDir) },
+          ].map(({ label, val }) => (
+            <div key={label}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: cs.fg, opacity: 0.7, letterSpacing: '0.09em', textTransform: 'uppercase', marginBottom: 3 }}>{label}</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: cs.fg }}>{val}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 7-day forecast row */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: DB.muted, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 10 }}>7-Day Forecast</div>
+        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
+          {daily.map((day, i) => {
+            const s   = SS[day.status] || SS.go;
+            const sel = i === selDayIdx;
+            return (
+              <button key={day.date} onClick={() => setSelDayIdx(i)} style={{
+                all: 'unset', cursor: 'pointer', flexShrink: 0, width: 88, boxSizing: 'border-box',
+                background: sel ? s.bg : DB.card, border: `1.5px solid ${sel ? s.border : DB.border}`,
+                borderRadius: 12, overflow: 'hidden',
+                boxShadow: sel ? `0 0 0 2px ${s.fg}2A` : '0 1px 3px rgba(0,0,0,0.05)',
+                transition: 'all 0.12s',
+              }}>
+                <div style={{ height: 4, background: s.fg }}/>
+                <div style={{ padding: '10px 9px' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: sel ? s.fg : DB.text, marginBottom: 1 }}>{day.dayLabel}</div>
+                  <div style={{ fontSize: 9, color: DB.muted, marginBottom: 8 }}>{day.dateLabel}</div>
+                  <div style={{ fontSize: 19, fontWeight: 800, color: sel ? s.fg : DB.text, lineHeight: 1 }}>
+                    {day.maxFt?.toFixed(1) ?? '—'}
+                  </div>
+                  <div style={{ fontSize: 9, color: DB.muted, marginBottom: 5 }}>ft max</div>
+                  <div style={{ fontSize: 10, color: DB.muted }}>
+                    {day.avgPeriodS ? `${day.avgPeriodS}s` : '—'} · {compassPt(day.dominantDir)}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Hourly chart */}
+      {chartH.length > 1 && (
+        <div style={{ background: DB.card, border: `1px solid ${DB.border}`, borderRadius: 14, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: DB.muted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>
+            {selDay.dayLabel} · Hourly Wave Height
+          </div>
+          <svg width="100%" viewBox={`0 0 ${CW} ${CH + 22}`} style={{ display: 'block', overflow: 'visible' }}>
+            {/* Zone fills */}
+            <rect x="0" y={y2} width={CW} height={CH - y2} rx="4" fill={DB.greenSoft} opacity="0.7"/>
+            {y4 < y2 && <rect x="0" y={y4} width={CW} height={y2 - y4} fill={DB.amberSoft} opacity="0.7"/>}
+            {y4 > 0  && <rect x="0" y="0"  width={CW} height={y4}      fill={DB.redSoft}   opacity="0.7"/>}
+            {/* Threshold lines */}
+            <line x1="0" y1={y2} x2={CW} y2={y2} stroke={DB.amber} strokeWidth="0.8" strokeDasharray="4 3" opacity="0.8"/>
+            <line x1="0" y1={y4} x2={CW} y2={y4} stroke={DB.red}   strokeWidth="0.8" strokeDasharray="4 3" opacity="0.8"/>
+            <text x={CW - 2} y={y2 - 3} fontSize="7.5" textAnchor="end" fill={DB.amber}>2 ft</text>
+            <text x={CW - 2} y={Math.max(y4 - 3, 8)} fontSize="7.5" textAnchor="end" fill={DB.red}>4 ft</text>
+            {/* Wave area + line */}
+            {areaPts && <polygon points={areaPts} fill={accent} fillOpacity="0.18"/>}
+            {pts && <polyline points={pts} fill="none" stroke={accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>}
+            {/* Now marker (today only) */}
+            {selDayIdx === 0 && (
+              <line x1={toX(nowHour)} y1="0" x2={toX(nowHour)} y2={CH} stroke={DB.red} strokeWidth="1.5" strokeDasharray="3 2" opacity="0.85"/>
+            )}
+            {/* X axis labels */}
+            <text x="1"     y={CH + 15} fontSize="8.5" fill={DB.muted}>12am</text>
+            <text x={toX(6)}  y={CH + 15} fontSize="8.5" textAnchor="middle" fill={DB.muted}>6am</text>
+            <text x={toX(12)} y={CH + 15} fontSize="8.5" textAnchor="middle" fill={DB.muted}>noon</text>
+            <text x={toX(18)} y={CH + 15} fontSize="8.5" textAnchor="middle" fill={DB.muted}>6pm</text>
+            <text x={CW - 1}  y={CH + 15} fontSize="8.5" textAnchor="end"    fill={DB.muted}>12am</text>
+          </svg>
+        </div>
+      )}
+
+      {/* Legend */}
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        {[
+          { label: 'Safe  < 2 ft',   color: DB.green },
+          { label: 'Caution  2–4 ft', color: DB.amber },
+          { label: 'No-Go  > 4 ft',  color: DB.red   },
+        ].map(({ label, color }) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: DB.muted }}>
+            <div style={{ width: 9, height: 9, borderRadius: 2, background: color, flexShrink: 0 }}/>
+            {label}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 11, color: DB.muted, textAlign: 'center', marginTop: 4 }}>
+        Open-Meteo Marine Forecast · Updated hourly
+      </div>
+    </div>
+  );
+}
+
+// ── Windy Embed View ─────────────────────────────────────────────────────────
+const WINDY_OVERLAYS = [
+  { id: 'wind',     label: '🌬 Wind'    },
+  { id: 'waves',    label: '🌊 Waves'   },
+  { id: 'gustAccu', label: '💨 Gusts'   },
+  { id: 'rain',     label: '🌧 Rain'    },
+  { id: 'temp',     label: '🌡 Temp'    },
+];
+
+function WindyView({ lat, lon, accent }) {
+  const [overlay, setOverlay] = useState('wind');
+  const [product, setProduct] = useState('ecmwf');
+
+  const clat = lat  ? parseFloat(lat.toFixed(3))  : 27.5;
+  const clon = lon  ? parseFloat(lon.toFixed(3))  : -82.6;
+  const zoom = 8;
+
+  const src = `https://embed.windy.com/embed2.html?` +
+    `lat=${clat}&lon=${clon}&` +
+    `detailLat=${clat}&detailLon=${clon}&` +
+    `width=800&height=600&zoom=${zoom}&level=surface&` +
+    `overlay=${overlay}&product=${product}&` +
+    `menu=&message=true&marker=true&calendar=now&pressure=&` +
+    `type=map&location=coordinates&detail=&` +
+    `metricWind=kt&metricTemp=%C2%B0F&radarRange=-1`;
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: DB.bg }}>
+      {/* Header bar */}
+      <div style={{
+        padding: '10px 16px', background: DB.card, borderBottom: `1px solid ${DB.border}`,
+        display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 10, letterSpacing: '0.14em', color: DB.muted, fontWeight: 700, textTransform: 'uppercase' }}>Live Forecast</div>
+          <div style={{ fontSize: 19, color: DB.text, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.2 }}>Windy</div>
+        </div>
+
+        {/* Overlay pills */}
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+          {WINDY_OVERLAYS.map(o => {
+            const on = overlay === o.id;
+            return (
+              <button key={o.id} onClick={() => setOverlay(o.id)} style={{
+                all: 'unset', cursor: 'pointer', padding: '5px 11px', borderRadius: 8,
+                background: on ? accent : DB.bg,
+                color: on ? '#fff' : DB.muted,
+                fontSize: 12, fontWeight: on ? 700 : 500,
+                border: `1.5px solid ${on ? accent : DB.border}`,
+                transition: 'all 0.12s',
+                boxShadow: on ? `0 2px 8px ${accent}44` : 'none',
+              }}>
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Model switcher */}
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+          {['ecmwf', 'gfs'].map(m => {
+            const on = product === m;
+            return (
+              <button key={m} onClick={() => setProduct(m)} style={{
+                all: 'unset', cursor: 'pointer', padding: '5px 10px', borderRadius: 7,
+                background: on ? `${accent}18` : 'transparent',
+                color: on ? accent : DB.muted,
+                fontSize: 11, fontWeight: on ? 700 : 500,
+                border: `1.5px solid ${on ? `${accent}55` : DB.border}`,
+                textTransform: 'uppercase', letterSpacing: '0.05em',
+              }}>
+                {m}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Windy iframe */}
+      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+        <iframe
+          key={src}
+          src={src}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
+          allowFullScreen
+          title="Windy live forecast map"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Tide Gauge View ──────────────────────────────────────────────────────────
+function TideGaugeView({ lat, lon, accent }) {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr]         = useState(null);
+  const [lastLoad, setLastLoad] = useState(null);
+
+  useEffect(() => {
+    if (!lat || !lon) { setErr('No location — enable GPS or plan a route first.'); setLoading(false); return; }
+    let cancelled = false;
+    setLoading(d => d === null ? true : d); // only show spinner on first load
+    fetch(`${API}/api/noaa/tides/gauge?lat=${lat}&lon=${lon}`)
+      .then(r => r.ok ? r.json() : Promise.reject('API error'))
+      .then(d => { if (!cancelled) { setData(d); setLoading(false); setErr(null); setLastLoad(Date.now()); } })
+      .catch(() => { if (!cancelled) { setErr('Could not load tide data from NOAA.'); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [lat, lon]);
+
+  // Auto-refresh every 5 min
+  useEffect(() => {
+    if (!lat || !lon) return;
+    const id = setInterval(() => {
+      fetch(`${API}/api/noaa/tides/gauge?lat=${lat}&lon=${lon}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) { setData(d); setLastLoad(Date.now()); } })
+        .catch(() => {});
+    }, 5 * 60000);
+    return () => clearInterval(id);
+  }, [lat, lon]);
+
+  const fmtFt  = (v) => v != null ? `${v.toFixed(1)} ft` : '—';
+  const fmtTime = (noaaStr) => {
+    if (!noaaStr) return '—';
+    const [date, time] = noaaStr.split(' ');
+    if (!time) return '—';
+    const [h, m] = time.split(':').map(Number);
+    const d = new Date(); d.setHours(h, m, 0, 0);
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  };
+  const ageStr = lastLoad ? (() => {
+    const s = Math.floor((Date.now() - lastLoad) / 1000);
+    return s < 60 ? 'just now' : `${Math.floor(s / 60)}m ago`;
+  })() : null;
+
+  if (loading) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, color: DB.muted, fontSize: 14 }}>
+      Loading tide data…
+    </div>
+  );
+
+  if (err || !data) return (
+    <div style={{ padding: 32, textAlign: 'center', color: DB.muted }}>
+      <div style={{ fontSize: 32, marginBottom: 12 }}>🌊</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: DB.text, marginBottom: 6 }}>{err || 'No data'}</div>
+    </div>
+  );
+
+  const { station, currentFt, trend, predictions, hilos, nextHigh, nextLow } = data;
+
+  // Chart dimensions
+  const CW = 360, CH = 70;
+  const vals  = predictions.map(p => p.v);
+  const vMin  = Math.min(...vals) - 0.3;
+  const vMax  = Math.max(...vals) + 0.3;
+  const vRng  = vMax - vMin || 1;
+
+  const toX = (noaaStr) => {
+    const time = noaaStr.split(' ')[1] || '00:00';
+    const [h, m] = time.split(':').map(Number);
+    return ((h * 60 + m) / 1440) * CW;
+  };
+  const toY = (v) => CH - ((v - vMin) / vRng) * CH;
+
+  const linePts = predictions.map(p => `${toX(p.t).toFixed(1)},${toY(p.v).toFixed(1)}`).join(' ');
+  const areaPts = `${toX(predictions[0].t).toFixed(1)},${CH} ${linePts} ${toX(predictions[predictions.length - 1].t).toFixed(1)},${CH}`;
+
+  const now = new Date();
+  const nowX = ((now.getHours() * 60 + now.getMinutes()) / 1440) * CW;
+
+  // Tide level gauge bar (vertical stick)
+  const dayMin = Math.min(...vals), dayMax = Math.max(...vals);
+  const dayRng = dayMax - dayMin || 1;
+  const levelPct = currentFt != null ? Math.max(0, Math.min(1, (currentFt - dayMin) / dayRng)) : 0;
+
+  const trendColor = trend === 'rising' ? DB.blue : trend === 'falling' ? '#64748B' : DB.muted;
+  const trendIcon  = trend === 'rising' ? '↑' : trend === 'falling' ? '↓' : '→';
+  const heightColor = currentFt == null ? DB.muted : currentFt < 1 ? DB.amber : currentFt > 3 ? DB.blue : '#0EA5E9';
+
+  // Today's hi/lo from hilos filtered to today only
+  const todayHilos = (hilos || []).filter(p => {
+    const dateStr = p.t?.split(' ')[0];
+    const todayStr = now.toISOString().slice(0, 10);
+    return dateStr === todayStr || dateStr === `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  });
+
+  return (
+    <div style={{ padding: '12px 20px 40px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+      {/* Header */}
+      <div>
+        <div style={{ fontSize: 11, letterSpacing: '0.14em', color: DB.muted, fontWeight: 600, textTransform: 'uppercase' }}>NOAA Tide Gauge</div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: DB.text, letterSpacing: '-0.02em', marginTop: 2 }}>{station.name}</div>
+        <div style={{ fontSize: 11, color: DB.muted, marginTop: 2 }}>
+          {station.dist_km != null ? `${(station.dist_km * 0.621).toFixed(0)} mi away · ` : ''}Station {station.id}
+        </div>
+      </div>
+
+      {/* Main gauge card */}
+      <div style={{ background: DB.card, border: `1.5px solid ${DB.border}`, borderRadius: 16, padding: '18px 20px', display: 'flex', gap: 20, alignItems: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+
+        {/* Tide stick */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: DB.muted, letterSpacing: '0.06em' }}>{fmtFt(dayMax)}</div>
+          <div style={{ width: 22, height: 100, background: '#EFF6FF', borderRadius: 6, border: `1px solid ${DB.border}`, position: 'relative', overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: `${levelPct * 100}%`, background: `linear-gradient(to top, ${accent}, ${accent}88)`, borderRadius: '0 0 5px 5px', transition: 'height 0.6s ease' }}/>
+          </div>
+          <div style={{ fontSize: 9, fontWeight: 700, color: DB.muted, letterSpacing: '0.06em' }}>{fmtFt(dayMin)}</div>
+        </div>
+
+        {/* Current reading */}
+        <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontSize: 42, fontWeight: 900, color: heightColor, lineHeight: 1, letterSpacing: '-0.03em' }}>
+              {currentFt != null ? currentFt.toFixed(1) : '—'}
+            </span>
+            <span style={{ fontSize: 18, fontWeight: 600, color: DB.muted }}>ft</span>
+            <span style={{ fontSize: 22, color: trendColor, fontWeight: 800, marginLeft: 4 }}>{trendIcon}</span>
+          </div>
+          <div style={{ fontSize: 12, color: DB.muted, marginTop: 4 }}>
+            above MLLW · <span style={{ color: trendColor, fontWeight: 600, textTransform: 'capitalize' }}>{trend}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Next High / Low */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        {[
+          { label: 'Next High', item: nextHigh, color: DB.blue, bg: DB.blueSoft },
+          { label: 'Next Low',  item: nextLow,  color: DB.muted, bg: DB.bg },
+        ].map(({ label, item, color, bg }) => (
+          <div key={label} style={{ background: bg, border: `1px solid ${DB.border}`, borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: DB.muted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>{label}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color, lineHeight: 1 }}>{fmtFt(item?.v)}</div>
+            <div style={{ fontSize: 12, color: DB.muted, marginTop: 4 }}>{fmtTime(item?.t)}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tide chart */}
+      {predictions.length > 1 && (
+        <div style={{ background: DB.card, border: `1px solid ${DB.border}`, borderRadius: 14, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: DB.muted, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>Today's Tide</div>
+          <svg width="100%" viewBox={`0 0 ${CW} ${CH + 22}`} style={{ display: 'block', overflow: 'visible' }}>
+            {/* Background */}
+            <rect width={CW} height={CH} rx="6" fill="#EFF6FF"/>
+            {/* Horizontal grid lines */}
+            {[0.25, 0.5, 0.75].map(f => (
+              <line key={f} x1="0" y1={CH * (1 - f)} x2={CW} y2={CH * (1 - f)} stroke="#DBEAFE" strokeWidth="0.8"/>
+            ))}
+            {/* Tide area fill */}
+            <polygon points={areaPts} fill={accent} fillOpacity="0.15"/>
+            {/* Tide curve */}
+            <polyline points={linePts} fill="none" stroke={accent} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+            {/* H/L labels */}
+            {todayHilos.map((p, i) => {
+              const x = toX(p.t), y = toY(p.v);
+              const isH = p.type === 'H';
+              return (
+                <g key={i}>
+                  <circle cx={x} cy={y} r="4" fill={isH ? DB.blue : '#94A3B8'} stroke="white" strokeWidth="1.5"/>
+                  <text x={x} y={isH ? y - 8 : y + 16} fontSize="8.5" textAnchor="middle" fill={isH ? DB.blue : '#64748B'} fontWeight="700">
+                    {p.type} {p.v.toFixed(1)}
+                  </text>
+                </g>
+              );
+            })}
+            {/* Current time line */}
+            {nowX >= 0 && nowX <= CW && (
+              <line x1={nowX} y1="0" x2={nowX} y2={CH} stroke="#EF4444" strokeWidth="1.5" strokeDasharray="3 2" opacity="0.9"/>
+            )}
+            {/* X-axis labels */}
+            {[{ label: '6am', h: 6 }, { label: 'noon', h: 12 }, { label: '6pm', h: 18 }].map(({ label, h }) => (
+              <text key={label} x={(h / 24) * CW} y={CH + 14} fontSize="8.5" textAnchor="middle" fill={DB.muted}>{label}</text>
+            ))}
+            <text x="0" y={CH + 14} fontSize="8.5" fill={DB.muted}>12am</text>
+            <text x={CW} y={CH + 14} fontSize="8.5" textAnchor="end" fill={DB.muted}>12am</text>
+          </svg>
+        </div>
+      )}
+
+      {/* Footer */}
+      <div style={{ fontSize: 11, color: DB.muted, textAlign: 'center' }}>
+        NOAA Tides &amp; Currents · MLLW datum
+        {ageStr && <span style={{ marginLeft: 6 }}>· refreshed {ageStr}</span>}
+      </div>
+    </div>
+  );
+}
+
+// ── SOS / Emergency Panel ────────────────────────────────────────────────────
+const USCG_SECTORS = [
+  { name: 'USCG Sector Boston',            lat: 42.36, lon: -71.06, phone: '(617) 223-8555' },
+  { name: 'USCG Sector New York',          lat: 40.65, lon: -74.03, phone: '(718) 354-4352' },
+  { name: 'USCG Sector Delaware Bay',      lat: 39.93, lon: -75.14, phone: '(215) 271-4940' },
+  { name: 'USCG Sector Baltimore',         lat: 39.29, lon: -76.61, phone: '(410) 576-2525' },
+  { name: 'USCG Sector Hampton Roads',     lat: 36.82, lon: -76.09, phone: '(757) 398-6390' },
+  { name: 'USCG Sector North Carolina',    lat: 34.73, lon: -76.67, phone: '(252) 247-4570' },
+  { name: 'USCG Sector Charleston',        lat: 32.78, lon: -79.93, phone: '(843) 724-7600' },
+  { name: 'USCG Sector Jacksonville',      lat: 30.33, lon: -81.66, phone: '(904) 714-7600' },
+  { name: 'USCG Sector Miami',             lat: 25.78, lon: -80.19, phone: '(305) 535-4314' },
+  { name: 'USCG Sector St. Petersburg',   lat: 27.77, lon: -82.64, phone: '(727) 824-7506' },
+  { name: 'USCG Sector Mobile',            lat: 30.65, lon: -88.11, phone: '(251) 441-5976' },
+  { name: 'USCG Sector New Orleans',       lat: 29.97, lon: -90.07, phone: '(504) 589-6225' },
+  { name: 'USCG Sector Houston-Galveston', lat: 29.76, lon: -95.37, phone: '(281) 464-4851' },
+  { name: 'USCG Sector Corpus Christi',    lat: 27.79, lon: -97.40, phone: '(361) 939-6393' },
+  { name: 'USCG Sector San Diego',         lat: 32.73, lon: -117.17, phone: '(619) 278-7033' },
+  { name: 'USCG Sector LA/Long Beach',     lat: 33.75, lon: -118.22, phone: '(310) 521-3801' },
+  { name: 'USCG Sector San Francisco',     lat: 37.81, lon: -122.47, phone: '(415) 399-3547' },
+  { name: 'USCG Sector Puget Sound',       lat: 47.60, lon: -122.34, phone: '(206) 217-6232' },
+  { name: 'USCG Sector Columbia River',    lat: 46.13, lon: -123.93, phone: '(503) 861-6211' },
+  { name: 'USCG Sector Honolulu',          lat: 21.31, lon: -157.87, phone: '(808) 842-2600' },
+  { name: 'USCG Sector Anchorage',         lat: 61.22, lon: -149.88, phone: '(907) 428-4100' },
+  { name: 'USCG Sector Lake Michigan',     lat: 41.89, lon: -87.63,  phone: '(312) 980-8600' },
+  { name: 'USCG Sector Detroit',           lat: 42.33, lon: -83.05,  phone: '(313) 568-9580' },
+  { name: 'USCG Sector Buffalo',           lat: 42.89, lon: -78.87,  phone: '(716) 843-9570' },
+];
+
+function _nearestSector(lat, lon) {
+  if (lat == null || lon == null) return null;
+  let best = null, bestD = Infinity;
+  for (const s of USCG_SECTORS) {
+    const d = _haversineNm(lat, lon, s.lat, s.lon);
+    if (d < bestD) { bestD = d; best = s; }
+  }
+  return best;
+}
+
+const DISTRESS_TYPES = [
+  { id: 'general',  label: 'General',       desc: 'in distress and require immediate assistance' },
+  { id: 'sinking',  label: 'Sinking',       desc: 'sinking / taking on water' },
+  { id: 'fire',     label: 'Fire',          desc: 'on fire' },
+  { id: 'mob',      label: 'Man Overboard', desc: 'reporting a person overboard' },
+  { id: 'medical',  label: 'Medical',       desc: 'experiencing a medical emergency' },
+];
+
+function _fmtDeg(val, posLabel, negLabel) {
+  if (val == null) return '?';
+  return `${Math.abs(val).toFixed(4)}° ${val >= 0 ? posLabel : negLabel}`;
+}
+
+function SOSScreen({ boat, appUserPos }) {
+  const [distressId, setDistressId] = useState('general');
+  const [copied, setCopied]         = useState(null); // 'script' | 'location' | null
+
+  const lat = appUserPos?.lat ?? null;
+  const lon = appUserPos?.lng ?? appUserPos?.lon ?? null;
+  const sector = _nearestSector(lat, lon);
+
+  const locationStr = lat != null
+    ? `${_fmtDeg(lat,'N','S')}, ${_fmtDeg(lon,'E','W')}`
+    : 'UNKNOWN — enable GPS';
+
+  const distress = DISTRESS_TYPES.find(d => d.id === distressId) ?? DISTRESS_TYPES[0];
+  const vessel   = boat?.name ?? 'MY VESSEL';
+  const persons  = boat?.capacity ?? '?';
+
+  const script = [
+    'MAYDAY  MAYDAY  MAYDAY',
+    `This is vessel ${vessel.toUpperCase()}, ${vessel.toUpperCase()}, ${vessel.toUpperCase()}`,
+    `MAYDAY ${vessel.toUpperCase()}`,
+    `My position: ${locationStr}`,
+    `I am ${distress.desc}`,
+    `${persons !== '?' ? `I have ${persons} persons on board` : 'Number of persons — state count'}`,
+    'I require immediate assistance',
+    'OVER',
+  ].join('\n');
+
+  const copyText = (text, key) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(key);
+      setTimeout(() => setCopied(null), 2500);
+    }).catch(() => {});
+  };
+
+  const mapsLink = lat != null ? `https://maps.google.com/?q=${lat},${lon}` : null;
+
+  const S = {
+    card:  { background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.14)', borderRadius: 14, padding: '16px 18px', marginBottom: 14 },
+    step:  { fontSize: 9.5, fontWeight: 800, letterSpacing: '0.14em', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', marginBottom: 6 },
+    h2:    { fontSize: 15, fontWeight: 800, color: 'white', marginBottom: 10 },
+    btn:   { all: 'unset', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 9, fontSize: 12.5, fontWeight: 700, transition: 'background 0.12s' },
+  };
+
+  return (
+    <div style={{ height: '100%', overflowY: 'auto', background: 'linear-gradient(160deg, #7F1D1D 0%, #991B1B 50%, #7C0000 100%)', fontFamily: 'inherit', padding: '20px 20px 40px' }}>
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <div style={{ fontSize: 28 }}>🚨</div>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: 'white', letterSpacing: '-0.02em', lineHeight: 1.1 }}>EMERGENCY</div>
+          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', marginTop: 2 }}>Stay calm — follow these steps</div>
+        </div>
+      </div>
+
+      {/* Distress type selector */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
+        {DISTRESS_TYPES.map(d => (
+          <button key={d.id} onClick={() => setDistressId(d.id)} style={{
+            all: 'unset', cursor: 'pointer', padding: '5px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600,
+            background: distressId === d.id ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)',
+            border: `1.5px solid ${distressId === d.id ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.18)'}`,
+            color: distressId === d.id ? 'white' : 'rgba(255,255,255,0.65)',
+          }}>
+            {d.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Step 1 — Call */}
+      <div style={S.card}>
+        <div style={S.step}>Step 1</div>
+        <div style={S.h2}>📻 Call for Help</div>
+
+        <div style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '12px 14px', marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>VHF Radio</div>
+          <div style={{ fontSize: 28, fontWeight: 900, color: 'white', letterSpacing: '-0.01em' }}>Channel 16</div>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>International distress frequency — monitored 24/7</div>
+        </div>
+
+        {sector && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>Nearest Coast Guard</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'white', marginBottom: 2 }}>{sector.name}</div>
+            <a href={`tel:${sector.phone.replace(/[^\d]/g,'')}`} style={{ fontSize: 20, fontWeight: 900, color: '#FCA5A5', textDecoration: 'none', letterSpacing: '-0.01em' }}>
+              {sector.phone}
+            </a>
+          </div>
+        )}
+
+        <div>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 2 }}>National USCG Emergency</div>
+          <a href="tel:18007326293" style={{ fontSize: 15, fontWeight: 800, color: '#FCA5A5', textDecoration: 'none' }}>1-800-SEA-MAYDAY</a>
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginLeft: 8 }}>(1-800-732-6293)</span>
+        </div>
+      </div>
+
+      {/* Step 2 — MAYDAY Script */}
+      <div style={S.card}>
+        <div style={S.step}>Step 2</div>
+        <div style={S.h2}>📢 Say This on VHF Channel 16</div>
+
+        <pre style={{
+          fontFamily: '"JetBrains Mono", "Fira Mono", "Consolas", monospace',
+          fontSize: 13, lineHeight: 1.7, color: 'white', background: 'rgba(0,0,0,0.3)',
+          border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '14px 16px',
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: '0 0 12px 0',
+        }}>
+          {script}
+        </pre>
+
+        <button
+          onClick={() => copyText(script, 'script')}
+          style={{ ...S.btn, background: copied === 'script' ? 'rgba(74,222,128,0.25)' : 'rgba(255,255,255,0.12)', color: copied === 'script' ? '#86EFAC' : 'white', border: `1px solid ${copied === 'script' ? 'rgba(74,222,128,0.5)' : 'rgba(255,255,255,0.2)'}` }}
+        >
+          {copied === 'script' ? '✓ Copied!' : '⎘ Copy Script'}
+        </button>
+      </div>
+
+      {/* Step 3 — Share Location */}
+      <div style={S.card}>
+        <div style={S.step}>Step 3</div>
+        <div style={S.h2}>📍 Share Your Position</div>
+
+        <div style={{ fontSize: 16, fontWeight: 700, color: 'white', marginBottom: 12, fontFamily: 'monospace', letterSpacing: '0.02em' }}>
+          {locationStr}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {mapsLink && (
+            <>
+              <button
+                onClick={() => copyText(mapsLink, 'location')}
+                style={{ ...S.btn, background: copied === 'location' ? 'rgba(74,222,128,0.25)' : 'rgba(255,255,255,0.12)', color: copied === 'location' ? '#86EFAC' : 'white', border: `1px solid ${copied === 'location' ? 'rgba(74,222,128,0.5)' : 'rgba(255,255,255,0.2)'}` }}
+              >
+                {copied === 'location' ? '✓ Copied!' : '⎘ Copy Map Link'}
+              </button>
+              <a href={mapsLink} target="_blank" rel="noreferrer" style={{ ...S.btn, background: 'rgba(255,255,255,0.12)', color: 'white', border: '1px solid rgba(255,255,255,0.2)', textDecoration: 'none' }}>
+                ↗ Open in Maps
+              </a>
+            </>
+          )}
+          {lat == null && (
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>Enable GPS on the map to get your position.</div>
+          )}
+        </div>
+      </div>
+
+      {/* Footer reminder */}
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', textAlign: 'center', lineHeight: 1.6, marginTop: 4 }}>
+        In US waters, the Coast Guard monitors VHF Channel 16 and 2182 kHz at all times.<br/>
+        Always activate your EPIRB if available.
+      </div>
+    </div>
+  );
+}
+
+// ── Main WebDashboard ────────────────────────────────────────────────────────
+function WebDashboard({
+  user, boat, boats, presetBoats, route, routeSafety, trips, currentTrip, appUserPos,
+  profileColor, accent, authToken, chatUnread, setChatUnread, activeDm, setActiveDm,
+  onPlanRoute, onSaveTrip, onLogout, onPinSet, onSelectBoat, onPickBoat,
+  addBoat, deleteBoat, onProfileColorChange,
+  onDeleteAccount, routingActive, routeError,
+}) {
+  const [activeView, setActiveView] = useState('home');
+
+  const { isLogging, elapsed: logElapsed, distNm: logDistNm, startLog, stopLog } =
+    useTripLogger({ authToken, boat, appUserPos });
+
+  const [weather, setWeather] = useState(null);
+  const [nwsAlerts, setNwsAlerts] = useState([]);
+  const [fuelDocks, setFuelDocks] = useState([]);
+  const [marinas, setMarinas] = useState([]);
+  const [dashSeamarks, setDashSeamarks] = useState({ hazards: [], bridges: [], reported: [] });
+  const [dashVessels, setDashVessels] = useState([]);
+  const [aisConnected, setAisConnected] = useState(false);
+  const [searchVal, setSearchVal] = useState('');
+  const [showReportModal, setShowReportModal] = useState(false);
+
+  const storedFuel = boat?.id ? parseFloat(localStorage.getItem(FUEL_KEY(boat.id)) || '0') : 0;
+  const fuelLevel  = storedFuel > 0 ? storedFuel : (boat?.fuelLevel || 0);
+  const fuelRangeNm = (boat?.fuelBurn>0 && boat?.cruiseSpeed>0 && fuelLevel>0) ? (fuelLevel/boat.fuelBurn)*boat.cruiseSpeed : 0;
+  const fuelRangeMi = Math.round(fuelRangeNm * 1.151);
+  const fuelCap    = boat?.fuelCapacity || boat?.tank || 90;
+  const fuelPct    = fuelCap > 0 ? Math.min(100, Math.round((fuelLevel/fuelCap)*100)) : 0;
+
+  const nextBridge = dashSeamarks.bridges?.find(b => b.verClr_ft != null) || null;
+  const bridgeAlert = nextBridge && boat?.mastHeight && nextBridge.verClr_ft < parseFloat(boat.mastHeight)
+    ? [{ type:'danger', text:`Bridge Clearance Alert — ${nextBridge.name||'Upcoming Bridge'}: ${nextBridge.verClr_ft}ft clearance` }] : [];
+  const nwsSevere = nwsAlerts.filter(a => a.severity === 'Extreme' || a.severity === 'Severe').map(a => ({ type:'danger', text: a.headline || a.event }));
+  const nwsMod    = nwsAlerts.filter(a => a.severity === 'Moderate').map(a => ({ type:'warning', text: a.headline || a.event }));
+  const cpaAlertVessels = dashVessels.filter(v => {
+    if (!appUserPos) return false;
+    const c = _computeCPA(appUserPos.lat, appUserPos.lng, 0, 0, v.lat, v.lng, v.sog||0, v.cog||0);
+    return c.dNm < 0.5 && c.tMin > 0 && c.tMin < 20;
+  });
+  const cpaAlerts = cpaAlertVessels.map(v => ({ type:'danger', text:`Collision risk: ${v.name} — CPA within 20 min` }));
+  const alerts = [...bridgeAlert, ...cpaAlerts, ...nwsSevere, ...nwsMod, ...(routeSafety?.reasons||[]).map(r => ({ type:'warning', text:r }))].slice(0,10);
+
+  const routeDistNm  = route?.waypoints ? _routeDistNm(route.waypoints) : 0;
+  const routeDistMi  = Math.round(routeDistNm * 1.151 * 10) / 10;
+  const isMapView    = ['home','navigate','map'].includes(activeView);
+
+  useEffect(() => {
+    const lat = appUserPos?.lat ?? (route?.fromLat ? parseFloat(route.fromLat) : null);
+    const lon = appUserPos?.lng ?? (route?.fromLon ? parseFloat(route.fromLon) : null);
+    if (!lat || !lon) return;
+    fetch(`${API}/api/noaa/buoys?lat=${lat}&lon=${lon}&n=1`)
+      .then(r => r.ok ? r.json() : [])
+      .then(async buoys => {
+        if (!buoys.length) return;
+        const obs = await fetch(`${API}/api/noaa/buoys/${buoys[0].id}/obs`).then(r => r.ok ? r.json() : null).catch(()=>null);
+        if (obs) setWeather({ ...obs, buoyName: buoys[0].name });
+      }).catch(()=>{});
+  }, [appUserPos?.lat, route?.fromLat]);
+
+  useEffect(() => {
+    const lat = appUserPos?.lat ?? (route?.fromLat ? parseFloat(route.fromLat) : null);
+    const lon = appUserPos?.lng ?? (route?.fromLon ? parseFloat(route.fromLon) : null);
+    if (!lat || !lon) return;
+    fetch(`${API}/api/noaa/alerts?lat=${lat}&lon=${lon}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(setNwsAlerts).catch(()=>{});
+  }, [appUserPos?.lat, route?.fromLat]);
+
+  useEffect(() => {
+    const lat = appUserPos?.lat ?? (route?.fromLat ? parseFloat(route.fromLat) : null);
+    const lon = appUserPos?.lng ?? (route?.fromLon ? parseFloat(route.fromLon) : null);
+    if (!lat || !lon) return;
+    _fetchFuelDocks(lat, lon).then(setFuelDocks);
+    _fetchMarinas(lat, lon).then(setMarinas);
+  }, [appUserPos?.lat, route?.fromLat]);
+
+  const handleSearch = e => {
+    if (e.key === 'Enter' && searchVal.trim()) {
+      const from = route?.from
+        ? { from: route.from }
+        : appUserPos
+        ? { from: 'My Location', fromLat: appUserPos.lat, fromLon: appUserPos.lng }
+        : { from: 'My Location' };
+      onPlanRoute({ ...from, to: searchVal.trim(), waypoints: null });
+      setSearchVal('');
+      setActiveView('home');
+    }
+  };
+
+  const navigate = v => {
+    if (v === 'hazards-report') { setShowReportModal(true); return; }
+    setActiveView(v);
+    if (v === 'chat') setChatUnread(0);
+  };
+
+  return (
+    <div style={{ display:'flex', height:'100vh', width:'100vw', overflow:'hidden', fontFamily:'"Inter",-apple-system,system-ui,sans-serif', background:DB.bg }}>
+      <DashSidebar activeView={activeView} onNavigate={navigate} user={user} boat={boat}
+        profileColor={profileColor} chatUnread={chatUnread} alertCount={alerts.length}
+        vesselAlertCount={cpaAlertVessels.length} onLogout={onLogout}/>
+
+      <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minWidth:0 }}>
+        <DashTopBar searchVal={searchVal} setSearchVal={setSearchVal} onSearch={handleSearch}
+          user={user} chatUnread={chatUnread} profileColor={profileColor} accent={accent}
+          alertCount={alerts.length} onNavigate={navigate}/>
+
+        <DashInfoCards boat={boat} fuelRangeMi={fuelRangeMi} fuelPct={fuelPct}
+          nextBridge={nextBridge} weather={weather} accent={accent} onPickBoat={() => navigate('boats')}
+          onSOS={() => navigate('sos')}/>
+
+        <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
+          <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minWidth:0 }}>
+            <div style={{ flex:1, position:'relative', overflow:'hidden' }}>
+              {isMapView ? (
+                <>
+                  <LiveMap route={route} accent={accent} routingActive={routingActive} routeError={routeError}
+                    onPinSet={(type, lat, lon, name) => {
+                      const r = route;
+                      const up = type === 'from'
+                        ? { from:name, fromLat:lat, fromLon:lon, to:r.to, toLat:r.toLat, toLon:r.toLon }
+                        : { from:r.from, fromLat:r.fromLat, fromLon:r.fromLon, to:name, toLat:lat, toLon:lon };
+                      onPlanRoute({ ...up, waypoints:null });
+                    }}
+                    bottomInset={0} boat={boat} fuelLevel={fuelLevel}
+                    onReportHazard={(lat, lon) => { setShowReportModal({ lat, lon }); }}
+                    onSeamarks={setDashSeamarks}
+                    onVessels={list => { setDashVessels(list); setAisConnected(list.length > 0 || true); }}
+                    isNavView={activeView === 'navigate'}
+                    isLogging={isLogging}
+                    logElapsed={logElapsed}
+                    logDistNm={Math.round(logDistNm * 100) / 100}
+                    onStartLog={startLog}
+                    onStopLog={stopLog}/>
+                  {/* Navigate view — no-route prompt */}
+                  {activeView === 'navigate' && !route?.waypoints && (
+                    <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', pointerEvents:'none', zIndex:200 }}>
+                      <div style={{ background:'rgba(8,17,28,0.92)', border:'1px solid rgba(255,255,255,0.12)', borderRadius:18, padding:'24px 28px', textAlign:'center', pointerEvents:'auto', backdropFilter:'blur(16px)', maxWidth:320 }}>
+                        <div style={{ fontSize:32, marginBottom:10 }}>🧭</div>
+                        <div style={{ fontSize:16, fontWeight:800, color:'white', marginBottom:6 }}>No Active Route</div>
+                        <div style={{ fontSize:13, color:'rgba(255,255,255,0.55)', marginBottom:16, lineHeight:1.5 }}>Plan a route first, then come back to Navigate for turn-by-turn guidance.</div>
+                        <button onClick={() => navigate('trips')} style={{ all:'unset', cursor:'pointer', padding:'10px 20px', background:accent, color:'#06151E', borderRadius:10, fontSize:13.5, fontWeight:700 }}>
+                          Plan a Route →
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : activeView === 'chat' ? (
+                <div style={{ height:'100%', overflow:'hidden' }}>
+                  <ChatScreen accent={accent} authToken={authToken} user={user}
+                    routeDep={route?.fromLat ? [parseFloat(route.fromLat), parseFloat(route.fromLon)] : null}
+                    onNewMessage={()=>{}} profileColor={profileColor}/>
+                </div>
+              ) : activeView === 'settings' ? (
+                <div style={{ height:'100%', overflowY:'auto', background:DB.bg }}>
+                  <SettingsScreen accent={accent} user={user} onLogout={onLogout}
+                    profileColor={profileColor} onProfileColorChange={onProfileColorChange}
+                    onDeleteAccount={onDeleteAccount} authToken={authToken} onOpenDm={setActiveDm}/>
+                </div>
+              ) : activeView === 'boats' ? (
+                <div style={{ height:'100%', overflowY:'auto', background:DB.bg }}>
+                  <BoatScreen accent={accent} boat={boat} setBoat={onSelectBoat}
+                    boats={boats} addBoat={addBoat} deleteBoat={deleteBoat}
+                    presetBoats={presetBoats} user={user}/>
+                </div>
+              ) : activeView === 'trips' ? (
+                <div style={{ height:'100%', overflowY:'auto', background:DB.bg }}>
+                  <TripScreen accent={accent} boat={boat} verdict={routeSafety?.verdict||'go'}
+                    route={route} routeSafety={routeSafety}
+                    onSave={onSaveTrip} onPlan={onPlanRoute}/>
+                </div>
+              ) : activeView === 'vessels' ? (
+                <VesselsView vessels={dashVessels} userPos={appUserPos} aisConnected={aisConnected} accent={accent}/>
+              ) : activeView === 'fuel' ? (
+                <FuelView boat={boat} authToken={authToken} route={route} appUserPos={appUserPos}/>
+              ) : activeView === 'marinas' ? (
+                <MarinaView
+                  lat={appUserPos?.lat ?? (route?.fromLat ? parseFloat(route.fromLat) : null)}
+                  lon={appUserPos?.lng ?? (route?.fromLon ? parseFloat(route.fromLon) : null)}
+                  onPlanRoute={partial => onPlanRoute({ ...route, ...partial, waypoints:null })}/>
+              ) : activeView === 'hazards' ? (
+                <HazardsView
+                  lat={appUserPos?.lat ?? (route?.fromLat ? parseFloat(route.fromLat) : null)}
+                  lon={appUserPos?.lng ?? (route?.fromLon ? parseFloat(route.fromLon) : null)}
+                  seamarks={[...dashSeamarks.hazards, ...(dashSeamarks.reported||[])]}
+                  authToken={authToken} user={user}
+                  onHazardSubmitted={() => {}}/>
+              ) : activeView === 'alerts' ? (
+                <AlertsView
+                  lat={appUserPos?.lat ?? (route?.fromLat ? parseFloat(route.fromLat) : null)}
+                  lon={appUserPos?.lng ?? (route?.fromLon ? parseFloat(route.fromLon) : null)}
+                  routeSafety={routeSafety}
+                  boat={boat}
+                  bridges={dashSeamarks.bridges}/>
+              ) : activeView === 'tides' ? (
+                <div style={{ height:'100%', overflowY:'auto', background:DB.bg }}>
+                  <TideGaugeView
+                    lat={appUserPos?.lat ?? (route?.fromLat ? parseFloat(route.fromLat) : null)}
+                    lon={appUserPos?.lng ?? (route?.fromLon ? parseFloat(route.fromLon) : null)}
+                    accent={accent}/>
+                </div>
+              ) : activeView === 'sea-state' ? (
+                <div style={{ height:'100%', overflowY:'auto', background:DB.bg }}>
+                  <SeaStateView
+                    lat={appUserPos?.lat ?? (route?.fromLat ? parseFloat(route.fromLat) : null)}
+                    lon={appUserPos?.lng ?? (route?.fromLon ? parseFloat(route.fromLon) : null)}
+                    accent={accent}/>
+                </div>
+              ) : activeView === 'sos' ? (
+                <SOSScreen boat={boat} appUserPos={appUserPos}/>
+              ) : activeView === 'trip-logs' ? (
+                <div style={{ height:'100%', overflowY:'auto', background:DB.bg }}>
+                  <TripLogsView authToken={authToken} accent={accent} boat={boat}/>
+                </div>
+              ) : activeView === 'weather' ? (
+                <WeatherView
+                  lat={appUserPos?.lat ?? (route?.fromLat ? parseFloat(route.fromLat) : null)}
+                  lon={appUserPos?.lng ?? (route?.fromLon ? parseFloat(route.fromLon) : null)}/>
+              ) : activeView === 'windy' ? (
+                <WindyView
+                  lat={appUserPos?.lat ?? (route?.fromLat ? parseFloat(route.fromLat) : null)}
+                  lon={appUserPos?.lng ?? (route?.fromLon ? parseFloat(route.fromLon) : null)}
+                  accent={accent}/>
+              ) : (
+                <div style={{ height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:12, color:DB.muted, background:DB.bg }}>
+                  <Icon name="compass" size={38} color={DB.border}/>
+                  <div style={{ fontSize:15, fontWeight:600, color:DB.muted }}>Coming Soon</div>
+                  <div style={{ fontSize:13 }}>This section is under development</div>
+                </div>
+              )}
+            </div>
+
+            <DashTripBar route={route} currentTrip={currentTrip}
+              fuelLevel={fuelLevel} fuelPct={fuelPct} fuelCap={fuelCap}
+              fuelRangeMi={fuelRangeMi} routeDistMi={routeDistMi}
+              onPlan={() => navigate('trips')}/>
+          </div>
+
+          <DashRightPanel alerts={alerts} fuelDocks={fuelDocks}
+            hazards={[...dashSeamarks.hazards, ...(dashSeamarks.reported||[])]} marinas={marinas}
+            onOpenChat={() => navigate('chat')}/>
+        </div>
+
+        <DashBottomTab activeView={activeView} onNavigate={navigate}
+          chatUnread={chatUnread} alertCount={alerts.length} accent={accent}/>
+      </div>
+
+      {activeDm && (
+        <DirectMessageModal friend={activeDm} authToken={authToken} user={user}
+          profileColor={profileColor} accent={accent} onClose={() => setActiveDm(null)}/>
+      )}
+
+      {showReportModal && (
+        <ReportHazardModal
+          lat={showReportModal.lat ?? appUserPos?.lat ?? (route?.fromLat ? parseFloat(route.fromLat) : null)}
+          lon={showReportModal.lon ?? appUserPos?.lng ?? (route?.fromLon ? parseFloat(route.fromLon) : null)}
+          authToken={authToken} user={user}
+          onClose={() => setShowReportModal(false)}
+          onSubmitted={() => setShowReportModal(false)}/>
+      )}
+    </div>
+  );
+}
+
 function TabBar({ tab, setTab, accent, chatUnread = 0 }) {
   const tabs = [
     { id: 'home',     label: 'Home',     icon: 'home'     },
@@ -3559,7 +6892,9 @@ function App() {
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
 
   // ── Settings state ──
-  const [colorMode, setColorMode] = useState(() => localStorage.getItem('safeseas_color_mode') || 'dark');
+  // Dark mode removed — always use light theme. Clear any stale stored preference.
+  localStorage.removeItem('safeseas_color_mode');
+  const [colorMode] = useState('light');
   const [profileColor, setProfileColor] = useState('#22E3D0');
 
   const AVATAR_COLORS = ['#22E3D0', '#38BDF8', '#A78BFA', '#F472B6', '#34D399', '#FB923C', '#F5B547', '#2DD4BF'];
@@ -3576,10 +6911,8 @@ function App() {
     }
   }
 
-  // Apply/remove .light class on <html> so CSS variables resolve correctly.
-  useEffect(() => {
-    document.documentElement.classList.toggle('light', colorMode === 'light');
-  }, [colorMode]);
+  // Ensure .dark class is never present (dark mode removed).
+  useEffect(() => { document.documentElement.classList.remove('dark'); }, []);
 
   // ── App state ──
   const [tab, setTab] = useState('home');
@@ -3593,6 +6926,8 @@ function App() {
   const [currentTrip, setCurrentTrip] = useState(null);
   const [routeSafety, setRouteSafety] = useState(null);
   const [routingActive, setRoutingActive] = useState(false);
+  const [routeError, setRouteError] = useState(null);
+  const routeReqIdRef = useRef(0);
   const homeStatus = routeSafety?.verdict || t.verdict;
 
   // ── Global GPS (runs on all tabs so Home nearby uses real position) ──
@@ -3685,11 +7020,6 @@ function App() {
     setTrips([]);
     setRouteSafety(null);
     setCurrentTrip(null);
-  };
-
-  const handleColorModeChange = (mode) => {
-    setColorMode(mode);
-    localStorage.setItem('safeseas_color_mode', mode);
   };
 
   const handleProfileColorChange = (color) => {
@@ -3802,25 +7132,35 @@ function App() {
     checkSafety(boat, full);
 
     if (full.fromLat && full.toLat) {
+      // Request sequencing: only the most recently issued planRoute call is
+      // allowed to apply its result, so an overlapping earlier request can't
+      // overwrite a newer one with a stale route.
+      const reqId = ++routeReqIdRef.current;
       setRoutingActive(true);
+      setRouteError(null);
       fetch(`${API}/api/maritime-route`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fromLat: full.fromLat, fromLon: full.fromLon, toLat: full.toLat, toLon: full.toLon }),
       })
-        .then(r => r.ok ? r.json() : null)
-        .then(maritime => {
+        .then(async r => {
+          const data = await r.json().catch(() => null);
+          if (routeReqIdRef.current !== reqId) return; // superseded by a newer request
           setRoutingActive(false);
-          if (maritime) {
-            setRoute(prev => ({
-              ...prev,
-              waypoints:   maritime.waypoints   || null,
-              fromSnapped: maritime.fromSnapped || null,
-              toSnapped:   maritime.toSnapped   || null,
-            }));
+          if (r.ok && data?.waypoints) {
+            setRoute(prev => ({ ...prev, waypoints: data.waypoints }));
+          } else {
+            // Never fall back to a straight line — an unrouted line can cross land.
+            setRoute(prev => ({ ...prev, waypoints: null }));
+            setRouteError(data?.error || 'No water route found between these points.');
           }
         })
-        .catch(() => setRoutingActive(false));
+        .catch(() => {
+          if (routeReqIdRef.current !== reqId) return;
+          setRoutingActive(false);
+          setRoute(prev => ({ ...prev, waypoints: null }));
+          setRouteError('Could not reach the routing server.');
+        });
     }
   }
 
@@ -3850,191 +7190,74 @@ function App() {
 
   if (!authChecked) {
     return (
-      <div style={{
-        minHeight: '100vh', width: '100%',
-        background: 'var(--c-bg)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: '"Inter", -apple-system, "SF Pro Text", system-ui, sans-serif',
-      }}>
-        <IOSDevice statusBar={<IOSStatusBar dark={colorMode === 'dark'} time="9:14"/>}>
-          <div style={{
-            position: 'absolute', inset: 0, background: 'var(--c-bg)',
-            display: 'grid', placeItems: 'center',
-          }}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ width: 48, height: 48, borderRadius: 16, background: `${t.accent}1A`, border: `1.5px solid ${t.accent}44`, display: 'grid', placeItems: 'center', margin: '0 auto 12px' }}>
-                <Icon name="boat" size={24} color={t.accent}/>
-              </div>
-              <div style={{ fontSize: 13, color: 'var(--c-text-4)' }}>Loading…</div>
-            </div>
+      <div style={{ minHeight:'100vh', width:'100%', background:DB.bg, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'"Inter",-apple-system,system-ui,sans-serif' }}>
+        <div style={{ textAlign:'center' }}>
+          <div style={{ width:52, height:52, borderRadius:16, background:`${t.accent}18`, border:`1.5px solid ${t.accent}44`, display:'grid', placeItems:'center', margin:'0 auto 14px' }}>
+            <Icon name="boat" size={26} color={t.accent}/>
           </div>
-        </IOSDevice>
+          <div style={{ fontSize:14, color:DB.muted }}>Loading Safe Seas…</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div style={{ minHeight:'100vh', width:'100%', background:DB.bg, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'"Inter",-apple-system,system-ui,sans-serif' }}>
+        <div style={{ width:'100%', maxWidth:400 }}>
+          <LoginScreen accent={t.accent} onLogin={handleLogin}/>
+        </div>
+      </div>
+    );
+  }
+
+  if (!disclaimerAccepted) {
+    return (
+      <div style={{ minHeight:'100vh', width:'100%', background:DB.bg, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'"Inter",-apple-system,system-ui,sans-serif' }}>
+        <div style={{ width:'100%', maxWidth:480 }}>
+          <DisclaimerScreen accent={t.accent} onAccept={handleDisclaimerAccept}/>
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{
-      minHeight: '100vh', width: '100%',
-      background: 'var(--c-bg)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: '24px 12px',
-      fontFamily: '"Inter", -apple-system, "SF Pro Text", system-ui, sans-serif',
-    }}>
-      <IOSDevice statusBar={<IOSStatusBar dark={colorMode === 'dark'} time="9:14"/>}>
-        <div data-screen-label={`SafeSeas — ${user ? tab : 'login'}`} style={{
-          position: 'absolute', inset: 0,
-          background: 'var(--c-bg)', color: 'var(--c-text)',
-          overflow: 'hidden',
-        }}>
-          {!user ? (
-            <LoginScreen accent={t.accent} onLogin={handleLogin}/>
-          ) : !disclaimerAccepted ? (
-            <DisclaimerScreen accent={t.accent} onAccept={handleDisclaimerAccept}/>
-          ) : (
-            <>
-              {tab === 'trip' ? (
-                <div style={{ position: 'absolute', inset: 0, paddingBottom: 100 }}>
-                  <TripScreen
-                    accent={t.accent} boat={boat}
-                    verdict={routeSafety?.verdict || t.verdict}
-                    pulse={t.pulseVerdict}
-                    route={currentTrip ? { from: currentTrip.from, to: currentTrip.to } : route}
-                    currentTrip={currentTrip}
-                    routeSafety={routeSafety}
-                    routingActive={routingActive}
-                    onSave={saveTrip}
-                    onPlan={planRoute}
-                    onPinSet={(type, lat, lon, name) => {
-                      const r = route;
-                      const updated = type === 'from'
-                        ? { from: name, fromLat: lat, fromLon: lon, to: r.to, toLat: r.toLat, toLon: r.toLon }
-                        : { from: r.from, fromLat: r.fromLat, fromLon: r.fromLon, to: name, toLat: lat, toLon: lon };
-                      planRoute({ ...updated, waypoints: null, fromSnapped: null, toSnapped: null });
-                    }}
-                  />
-                </div>
-              ) : tab === 'chat' ? (
-                <div style={{ position: 'absolute', inset: 0, paddingBottom: 100 }}>
-                  <ChatScreen
-                    accent={t.accent}
-                    authToken={authToken}
-                    user={user}
-                    routeDep={route?.fromLat ? [parseFloat(route.fromLat), parseFloat(route.fromLon)] : null}
-                    onNewMessage={() => setChatUnread(n => n + 1)}
-                    profileColor={profileColor}
-                  />
-                </div>
-              ) : (
-                <div style={{ position: 'absolute', inset: 0, overflow: 'auto', paddingBottom: 110 }}>
-                  {tab === 'home' && (
-                    <HomeScreen
-                      accent={t.accent} boat={boat} boats={boats}
-                      currentStatus={homeStatus} routeSafety={routeSafety}
-                      route={currentTrip ? { from: currentTrip.from, to: currentTrip.to } : route}
-                      onPlan={planRoute}
-                      onTrip={(trip) => {
-                        setCurrentTrip(trip);
-                        setRoute({ from: trip.from || 'Anna Maria Island', to: trip.to || 'Egmont Key' });
-                        setTab('trip');
-                      }}
-                      onUpdateRoute={(partial) => setRoute(r => ({
-                        ...r, ...partial,
-                        // Clear computed route whenever endpoints change so stale waypoints don't linger
-                        waypoints: null, fromSnapped: null, toSnapped: null,
-                      }))}
-                      userPos={appUserPos}
-                      onRouteTo={({ name, lat, lon }) => {
-                        const depLat = appUserPos?.lat ?? route.fromLat;
-                        const depLon = appUserPos?.lng ?? route.fromLon;
-                        const depName = appUserPos ? 'My Location' : route.from;
-                        planRoute({
-                          from: depName, fromLat: String(depLat), fromLon: String(depLon),
-                          to: name, toLat: String(lat), toLon: String(lon),
-                        });
-                      }}
-                      onSelectBoat={(b) => setBoat(b)}
-                      onPickBoat={() => setTab('boat')}
-                      trips={trips}
-                      user={user}
-                      onSettings={() => setTab('settings')}
-                      profileColor={profileColor}
-                    />
-                  )}
-                  {tab === 'boat' && (
-                    <BoatScreen
-                      accent={t.accent} boat={boat} setBoat={setBoat}
-                      boats={boats} addBoat={addBoat} deleteBoat={deleteBoat}
-                      presetBoats={presetBoats}
-                      user={user}
-                    />
-                  )}
-                  {tab === 'settings' && (
-                    <SettingsScreen
-                      accent={t.accent}
-                      user={user}
-                      onLogout={handleLogout}
-                      profileColor={profileColor}
-                      onProfileColorChange={handleProfileColorChange}
-                      colorMode={colorMode}
-                      onColorModeChange={handleColorModeChange}
-                      onDeleteAccount={deleteAccount}
-                      authToken={authToken}
-                      onOpenDm={setActiveDm}
-                    />
-                  )}
-                </div>
-              )}
-              {activeDm && (
-                <DirectMessageModal
-                  friend={activeDm}
-                  authToken={authToken}
-                  user={user}
-                  profileColor={profileColor}
-                  accent={t.accent}
-                  onClose={() => setActiveDm(null)}
-                />
-              )}
-              <TabBar tab={tab} setTab={(id) => { setTab(id); if (id === 'chat') setChatUnread(0); }} accent={t.accent} chatUnread={chatUnread}/>
-            </>
-          )}
-        </div>
-      </IOSDevice>
-
-      <TweaksPanel>
-        <TweakSection label="Accent color"/>
-        <TweakColor
-          label="Route & active"
-          value={t.accent}
-          options={[ACCENT_OPTIONS.cyan, ACCENT_OPTIONS.teal, ACCENT_OPTIONS.sky, ACCENT_OPTIONS.amber]}
-          onChange={v => setTweak('accent', v)}
-        />
-        <TweakSection label="Trip verdict"/>
-        <TweakRadio
-          label="Today's call"
-          value={t.verdict}
-          options={['go', 'wait', 'nogo']}
-          onChange={v => setTweak('verdict', v)}
-        />
-        <TweakToggle
-          label="Pulse verdict pill"
-          value={t.pulseVerdict}
-          onChange={v => setTweak('pulseVerdict', v)}
-        />
-        <TweakSection label="Jump to"/>
-        <div style={{ display: 'flex', gap: 6, padding: '4px 12px 10px' }}>
-          {['home','trip','boat','settings'].map(id => (
-            <button key={id} onClick={() => setTab(id)} style={{
-              all: 'unset', cursor: 'pointer', flex: 1, textAlign: 'center',
-              padding: '7px 0', borderRadius: 8,
-              background: tab === id ? '#29261b' : 'rgba(0,0,0,0.05)',
-              color: tab === id ? '#fff' : '#29261b',
-              fontSize: 11.5, fontWeight: 600, textTransform: 'capitalize',
-            }}>{id}</button>
-          ))}
-        </div>
-      </TweaksPanel>
-    </div>
+    <WebDashboard
+      user={user}
+      boat={boat}
+      boats={boats}
+      presetBoats={presetBoats}
+      route={route}
+      routeSafety={routeSafety}
+      routeError={routeError}
+      trips={trips}
+      currentTrip={currentTrip}
+      appUserPos={appUserPos}
+      profileColor={profileColor}
+      accent={t.accent}
+      authToken={authToken}
+      chatUnread={chatUnread}
+      setChatUnread={setChatUnread}
+      activeDm={activeDm}
+      setActiveDm={setActiveDm}
+      onPlanRoute={planRoute}
+      onSaveTrip={saveTrip}
+      onLogout={handleLogout}
+      onPinSet={(type, lat, lon, name) => {
+        const r = route;
+        const updated = type === 'from'
+          ? { from: name, fromLat: lat, fromLon: lon, to: r.to, toLat: r.toLat, toLon: r.toLon }
+          : { from: r.from, fromLat: r.fromLat, fromLon: r.fromLon, to: name, toLat: lat, toLon: lon };
+        planRoute({ ...updated, waypoints: null, fromSnapped: null, toSnapped: null });
+      }}
+      onSelectBoat={b => setBoat(b)}
+      onPickBoat={() => {}}
+      addBoat={addBoat}
+      deleteBoat={deleteBoat}
+      onProfileColorChange={handleProfileColorChange}
+      onDeleteAccount={deleteAccount}
+      routingActive={routingActive}
+    />
   );
 }
 

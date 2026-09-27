@@ -9,20 +9,6 @@ body{font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica
 
 /* ── Theme tokens ─────────────────────────────────────────────────────────── */
 :root {
-  --c-bg:          #0A1420;
-  --c-surface:     #13202E;
-  --c-border:      #1E2F42;
-  --c-surface-alt: #0F1A26;
-  --c-border-soft: #1B2C40;
-  --c-disabled:    #1A2D40;
-  --c-text:        #F1F5F9;
-  --c-text-2:      #C5D2E0;
-  --c-text-3:      #7E94AE;
-  --c-text-4:      #5B7791;
-  --c-text-5:      #2A4258;
-}
-
-.light {
   --c-bg:          #EEF3F8;
   --c-surface:     #FFFFFF;
   --c-border:      #D1DCE8;
@@ -34,4 +20,18 @@ body{font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica
   --c-text-3:      #4A6A8A;
   --c-text-4:      #657D95;
   --c-text-5:      #8DA4BA;
+}
+
+.dark {
+  --c-bg:          #0A1420;
+  --c-surface:     #13202E;
+  --c-border:      #1E2F42;
+  --c-surface-alt: #0F1A26;
+  --c-border-soft: #1B2C40;
+  --c-disabled:    #1A2D40;
+  --c-text:        #F1F5F9;
+  --c-text-2:      #C5D2E0;
+  --c-text-3:      #7E94AE;
+  --c-text-4:      #5B7791;
+  --c-text-5:      #2A4258;
 }
