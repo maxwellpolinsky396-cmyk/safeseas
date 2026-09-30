@@ -1,7 +1,5 @@
 require('dotenv').config();
 const http    = require('http');
-const fs      = require('fs');
-const path    = require('path');
 const express = require('express');
 const cors    = require('cors');
 const { Server: SocketServer } = require('socket.io');
@@ -17,15 +15,6 @@ noaa.loadCurrentStations().catch(e => console.warn('Current stations pre-load:',
 noaa.loadTideStations().catch(e => console.warn('Tide stations pre-load:', e.message));
 
 // ── Hazard store ─────────────────────────────────────────────────────────────
-const HAZARDS_FILE = path.join(__dirname, 'data', 'hazards.json');
-function loadHazards() {
-  try { return JSON.parse(fs.readFileSync(HAZARDS_FILE, 'utf8')); }
-  catch { return []; }
-}
-function saveHazards(arr) {
-  fs.writeFileSync(HAZARDS_FILE, JSON.stringify(arr, null, 2));
-}
-let hazardStore = loadHazards();
 function haversineKm(lat1, lon1, lat2, lon2) {
   const R = 6371, d2r = Math.PI / 180;
   const dLat = (lat2-lat1)*d2r, dLon = (lon2-lon1)*d2r;
@@ -523,160 +512,192 @@ app.get('/api/noaa/buoys/:stationId/obs', async (req, res) => {
 });
 
 // ── Fuel Log ─────────────────────────────────────────────────────────────────
-const FUEL_LOG_FILE = path.join(__dirname, 'data', 'fuel_logs.json');
-function loadFuelLogs() {
-  try { return JSON.parse(fs.readFileSync(FUEL_LOG_FILE, 'utf8')); }
-  catch { return []; }
-}
-function saveFuelLogs(arr) { fs.writeFileSync(FUEL_LOG_FILE, JSON.stringify(arr, null, 2)); }
-let fuelLogStore = loadFuelLogs();
 
-app.get('/api/fuel', requireAuth, (req, res) => {
-  const { boatId } = req.query;
-  const entries = fuelLogStore.filter(e => e.userId === req.user.id && (!boatId || e.boatId === boatId));
-  res.json(entries.sort((a, b) => new Date(b.date) - new Date(a.date)));
+app.get('/api/fuel', requireAuth, async (req, res) => {
+  try {
+    const { boatId } = req.query;
+    const entries = await db.getFuelLogs(req.user.id, boatId || null);
+    res.json(entries);
+  } catch (err) {
+    console.error('get-fuel error', err);
+    res.status(500).json({ error: 'Failed to load fuel logs' });
+  }
 });
 
-app.post('/api/fuel', requireAuth, (req, res) => {
-  const { boatId, gallons, pricePerGal, locationName, lat, lon, note, fillToFull } = req.body;
-  if (!gallons || gallons <= 0) return res.status(400).json({ error: 'gallons required' });
-  const entry = {
-    id:           Date.now().toString(),
-    userId:       req.user.id,
-    boatId:       boatId || null,
-    gallons:      parseFloat(gallons),
-    pricePerGal:  pricePerGal ? parseFloat(pricePerGal) : null,
-    totalCost:    pricePerGal ? Math.round(parseFloat(gallons) * parseFloat(pricePerGal) * 100) / 100 : null,
-    locationName: locationName || null,
-    lat:          lat ? parseFloat(lat) : null,
-    lon:          lon ? parseFloat(lon) : null,
-    note:         (note || '').slice(0, 200),
-    fillToFull:   !!fillToFull,
-    date:         new Date().toISOString(),
-  };
-  fuelLogStore.push(entry);
-  saveFuelLogs(fuelLogStore);
-  res.status(201).json(entry);
+app.post('/api/fuel', requireAuth, async (req, res) => {
+  try {
+    const { boatId, gallons, pricePerGal, locationName, lat, lon, note, fillToFull } = req.body;
+    if (!gallons || gallons <= 0) return res.status(400).json({ error: 'gallons required' });
+    const entry = {
+      id:           Date.now().toString(),
+      userId:       req.user.id,
+      boatId:       boatId || null,
+      gallons:      parseFloat(gallons),
+      pricePerGal:  pricePerGal ? parseFloat(pricePerGal) : null,
+      totalCost:    pricePerGal ? Math.round(parseFloat(gallons) * parseFloat(pricePerGal) * 100) / 100 : null,
+      locationName: locationName || null,
+      lat:          lat ? parseFloat(lat) : null,
+      lon:          lon ? parseFloat(lon) : null,
+      note:         (note || '').slice(0, 200),
+      fillToFull:   !!fillToFull,
+      date:         new Date().toISOString(),
+    };
+    await db.addFuelLog(entry);
+    res.status(201).json(entry);
+  } catch (err) {
+    console.error('add-fuel error', err);
+    res.status(500).json({ error: 'Failed to save fuel log' });
+  }
 });
 
-app.delete('/api/fuel/:id', requireAuth, (req, res) => {
-  const idx = fuelLogStore.findIndex(e => e.id === req.params.id && e.userId === req.user.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  fuelLogStore.splice(idx, 1);
-  saveFuelLogs(fuelLogStore);
-  res.json({ ok: true });
+app.delete('/api/fuel/:id', requireAuth, async (req, res) => {
+  try {
+    const ok = await db.deleteFuelLog(req.user.id, req.params.id);
+    if (!ok) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('delete-fuel error', err);
+    res.status(500).json({ error: 'Failed to delete fuel log' });
+  }
 });
 
 // ── Trip Logs ────────────────────────────────────────────────────────────────
 
-const TRIP_LOG_FILE = path.join(__dirname, 'data', 'trip_logs.json');
-function loadTripLogs() {
-  try { return JSON.parse(fs.readFileSync(TRIP_LOG_FILE, 'utf8')); }
-  catch { return []; }
-}
-function saveTripLogs(arr) { fs.writeFileSync(TRIP_LOG_FILE, JSON.stringify(arr, null, 2)); }
-let tripLogStore = loadTripLogs();
-
 // List logs for user (strip heavy track array for list view)
-app.get('/api/trip-logs', requireAuth, (req, res) => {
-  const logs = tripLogStore
-    .filter(l => l.userId === req.user.id)
-    .map(({ track, ...rest }) => rest)
-    .sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
-  res.json(logs);
+app.get('/api/trip-logs', requireAuth, async (req, res) => {
+  try {
+    const logs = await db.getTripLogs(req.user.id);
+    res.json(logs.sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt)));
+  } catch (err) {
+    console.error('get-trip-logs error', err);
+    res.status(500).json({ error: 'Failed to load trip logs' });
+  }
 });
 
 // Get full log including track
-app.get('/api/trip-logs/:id', requireAuth, (req, res) => {
-  const log = tripLogStore.find(l => l.id === req.params.id && l.userId === req.user.id);
-  if (!log) return res.status(404).json({ error: 'Not found' });
-  res.json(log);
+app.get('/api/trip-logs/:id', requireAuth, async (req, res) => {
+  try {
+    const log = await db.getTripLog(req.user.id, req.params.id);
+    if (!log) return res.status(404).json({ error: 'Not found' });
+    res.json(log);
+  } catch (err) {
+    console.error('get-trip-log error', err);
+    res.status(500).json({ error: 'Failed to load trip log' });
+  }
 });
 
 // Save completed trip log
-app.post('/api/trip-logs', requireAuth, (req, res) => {
-  const { name, startedAt, endedAt, durationMin, distanceNm, maxSpeedKt, avgSpeedKt, track, boatId, boatName } = req.body;
-  if (!startedAt || !track?.length) return res.status(400).json({ error: 'startedAt and track required' });
-  const log = {
-    id: `tl_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
-    userId: req.user.id,
-    name: name || `Trip ${new Date(startedAt).toLocaleDateString()}`,
-    startedAt, endedAt, durationMin: durationMin || 0,
-    distanceNm: distanceNm || 0, maxSpeedKt: maxSpeedKt || 0, avgSpeedKt: avgSpeedKt || 0,
-    boatId: boatId || null, boatName: boatName || null,
-    track: track || [],
-    createdAt: new Date().toISOString(),
-  };
-  tripLogStore.push(log);
-  saveTripLogs(tripLogStore);
-  res.status(201).json(log);
+app.post('/api/trip-logs', requireAuth, async (req, res) => {
+  try {
+    const { name, startedAt, endedAt, durationMin, distanceNm, maxSpeedKt, avgSpeedKt, track, boatId, boatName } = req.body;
+    if (!startedAt || !track?.length) return res.status(400).json({ error: 'startedAt and track required' });
+    const log = {
+      id: `tl_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+      userId: req.user.id,
+      name: name || `Trip ${new Date(startedAt).toLocaleDateString()}`,
+      startedAt, endedAt, durationMin: durationMin || 0,
+      distanceNm: distanceNm || 0, maxSpeedKt: maxSpeedKt || 0, avgSpeedKt: avgSpeedKt || 0,
+      boatId: boatId || null, boatName: boatName || null,
+      track: track || [],
+      createdAt: new Date().toISOString(),
+    };
+    await db.addTripLog(log);
+    res.status(201).json(log);
+  } catch (err) {
+    console.error('add-trip-log error', err);
+    res.status(500).json({ error: 'Failed to save trip log' });
+  }
 });
 
 // Rename a trip log
-app.patch('/api/trip-logs/:id', requireAuth, (req, res) => {
-  const log = tripLogStore.find(l => l.id === req.params.id && l.userId === req.user.id);
-  if (!log) return res.status(404).json({ error: 'Not found' });
-  if (req.body.name) log.name = req.body.name.trim().slice(0, 80);
-  saveTripLogs(tripLogStore);
-  res.json({ ok: true });
+app.patch('/api/trip-logs/:id', requireAuth, async (req, res) => {
+  try {
+    if (!req.body.name) return res.json({ ok: true });
+    const ok = await db.renameTripLog(req.user.id, req.params.id, req.body.name.trim().slice(0, 80));
+    if (!ok) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('rename-trip-log error', err);
+    res.status(500).json({ error: 'Failed to rename trip log' });
+  }
 });
 
-app.delete('/api/trip-logs/:id', requireAuth, (req, res) => {
-  const idx = tripLogStore.findIndex(l => l.id === req.params.id && l.userId === req.user.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  tripLogStore.splice(idx, 1);
-  saveTripLogs(tripLogStore);
-  res.json({ ok: true });
+app.delete('/api/trip-logs/:id', requireAuth, async (req, res) => {
+  try {
+    const ok = await db.deleteTripLog(req.user.id, req.params.id);
+    if (!ok) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('delete-trip-log error', err);
+    res.status(500).json({ error: 'Failed to delete trip log' });
+  }
 });
 
 // ── Community Hazard Reports ─────────────────────────────────────────────────
 
-app.get('/api/hazards', (req, res) => {
-  const lat = parseFloat(req.query.lat);
-  const lon = parseFloat(req.query.lon);
-  const radius = parseFloat(req.query.radius) || 100;
-  if (!isNaN(lat) && !isNaN(lon)) {
-    const near = hazardStore
-      .map(h => ({ ...h, dist_km: Math.round(haversineKm(lat, lon, h.lat, h.lon) * 10) / 10 }))
-      .filter(h => h.dist_km <= radius)
-      .sort((a, b) => a.dist_km - b.dist_km);
-    return res.json(near);
+app.get('/api/hazards', async (req, res) => {
+  try {
+    const lat = parseFloat(req.query.lat);
+    const lon = parseFloat(req.query.lon);
+    const radius = parseFloat(req.query.radius) || 100;
+    const hazards = await db.getHazards();
+    if (!isNaN(lat) && !isNaN(lon)) {
+      const near = hazards
+        .map(h => ({ ...h, dist_km: Math.round(haversineKm(lat, lon, h.lat, h.lon) * 10) / 10 }))
+        .filter(h => h.dist_km <= radius)
+        .sort((a, b) => a.dist_km - b.dist_km);
+      return res.json(near);
+    }
+    res.json(hazards);
+  } catch (err) {
+    console.error('get-hazards error', err);
+    res.status(500).json({ error: 'Failed to load hazards' });
   }
-  res.json(hazardStore);
 });
 
-app.post('/api/hazards', requireAuth, (req, res) => {
-  const { lat, lon, type, description } = req.body;
-  if (!lat || !lon || !type) return res.status(400).json({ error: 'lat, lon, type required' });
-  const hazard = {
-    id:          Date.now().toString(),
-    lat:         parseFloat(lat),
-    lon:         parseFloat(lon),
-    type,
-    description: (description || '').slice(0, 300),
-    reportedBy:  req.user?.name || 'Anonymous',
-    reportedAt:  new Date().toISOString(),
-    upvotes:     0,
-  };
-  hazardStore.push(hazard);
-  saveHazards(hazardStore);
-  res.status(201).json(hazard);
+app.post('/api/hazards', requireAuth, async (req, res) => {
+  try {
+    const { lat, lon, type, description } = req.body;
+    if (!lat || !lon || !type) return res.status(400).json({ error: 'lat, lon, type required' });
+    const hazard = {
+      id:               Date.now().toString(),
+      lat:              parseFloat(lat),
+      lon:              parseFloat(lon),
+      type,
+      description:      (description || '').slice(0, 300),
+      reportedBy:       req.user?.name || 'Anonymous',
+      reportedByUserId: req.user?.id || null,
+      reportedAt:       new Date().toISOString(),
+      upvotes:          0,
+    };
+    await db.addHazard(hazard);
+    res.status(201).json(hazard);
+  } catch (err) {
+    console.error('add-hazard error', err);
+    res.status(500).json({ error: 'Failed to save hazard' });
+  }
 });
 
-app.post('/api/hazards/:id/upvote', requireAuth, (req, res) => {
-  const h = hazardStore.find(x => x.id === req.params.id);
-  if (!h) return res.status(404).json({ error: 'Not found' });
-  h.upvotes = (h.upvotes || 0) + 1;
-  saveHazards(hazardStore);
-  res.json(h);
+app.post('/api/hazards/:id/upvote', requireAuth, async (req, res) => {
+  try {
+    const h = await db.upvoteHazard(req.params.id);
+    if (!h) return res.status(404).json({ error: 'Not found' });
+    res.json(h);
+  } catch (err) {
+    console.error('upvote-hazard error', err);
+    res.status(500).json({ error: 'Failed to upvote hazard' });
+  }
 });
 
-app.delete('/api/hazards/:id', requireAuth, (req, res) => {
-  const idx = hazardStore.findIndex(x => x.id === req.params.id && x.reportedBy === req.user?.name);
-  if (idx === -1) return res.status(404).json({ error: 'Not found or not your report' });
-  hazardStore.splice(idx, 1);
-  saveHazards(hazardStore);
-  res.json({ ok: true });
+app.delete('/api/hazards/:id', requireAuth, async (req, res) => {
+  try {
+    const ok = await db.deleteHazard(req.params.id, req.user?.name);
+    if (!ok) return res.status(404).json({ error: 'Not found or not your report' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('delete-hazard error', err);
+    res.status(500).json({ error: 'Failed to delete hazard' });
+  }
 });
 
 // Active NWS weather alerts near a point
